@@ -12,11 +12,36 @@ leakage-aware feature engineering, walk-forward validation, and
 rank-based evaluation — rather than a simplified backtest that
 overstates performance through survivorship or look-ahead bias.
 
-**Status:** the pipeline is fully implemented (see `src/`) but has not
-yet been run end-to-end against live WRDS data, so no performance
-numbers are published here yet. Results will be added to this README
-once produced by an actual run — no placeholder or estimated figures
-are included.
+## At a glance
+
+- **Objective:** rank S&P 500 stocks by predicted next-month relative
+  return and evaluate whether a gradient-boosted model beats a linear
+  baseline out-of-sample.
+- **Stack:** Python, pandas/NumPy, scikit-learn, LightGBM, WRDS/CRSP.
+- **Techniques:** point-in-time universe construction (survivorship-bias
+  free), leakage-aware factor engineering, walk-forward cross-validation,
+  rank-based (Information Coefficient) evaluation, long-short decile
+  backtesting with turnover analysis.
+- **Status:** pipeline fully implemented (`src/`); end-to-end run against
+  live WRDS data and published results pending — see [Results](#results).
+
+## Results
+
+**Not yet available.** The pipeline (below) is fully built and verified
+to compile, but has not been executed end-to-end against live WRDS data,
+so no performance numbers exist yet. This section will be filled in with
+real output from `output/model_comparison.csv` once a full run
+completes — no placeholder or estimated figures are shown in the
+meantime.
+
+| Metric                  | Linear (Fama-MacBeth) | LightGBM |
+|--------------------------|:---------------------:|:--------:|
+| Annualized return        | TBD                   | TBD      |
+| Annualized volatility    | TBD                   | TBD      |
+| Sharpe ratio             | TBD                   | TBD      |
+| Max drawdown             | TBD                   | TBD      |
+| Avg. monthly IC (Spearman) | TBD                 | TBD      |
+| Avg. monthly turnover    | TBD                   | TBD      |
 
 ## Why point-in-time data matters
 
