@@ -162,5 +162,8 @@ def build_universe_and_prices(
 if __name__ == "__main__":
     import sys
 
+    start = '2024-01-01'
+    end = '2026-01-01'
+
     username = sys.argv[1] if len(sys.argv) > 1 else None
-    build_universe_and_prices(wrds_username=username)
+    build_universe_and_prices(wrds_username=username, start=start, end=end)
