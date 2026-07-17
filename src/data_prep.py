@@ -140,6 +140,8 @@ def build_universe_and_prices(
     db = connect(wrds_username)
 
     print("Pulling point-in-time S&P 500 membership...")
+    
+    # pulls the list? df? of PERMNOs active during that time
     membership = get_sp500_membership(db, start, end)
     DATA_DIR.mkdir(exist_ok=True)
     membership.to_parquet(DATA_DIR / "sp500_membership.parquet", index=False)
