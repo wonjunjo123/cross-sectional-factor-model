@@ -1,7 +1,7 @@
 # Point-in-Time Cross-Sectional Factor Model
 
 A quantitative equity research project that ranks S&P 500 stocks by
-predicted next-month relative return, comparing a linear
+predicted next-quarter (3-month) relative return, comparing a linear
 (Fama-MacBeth-style) baseline against a gradient-boosted (LightGBM)
 model on the same factor set, and backtesting a long-short decile
 portfolio built on the resulting rankings.
@@ -14,7 +14,7 @@ overstates performance through survivorship or look-ahead bias.
 
 ## At a glance
 
-- **Objective:** rank S&P 500 stocks by predicted next-month relative
+- **Objective:** rank S&P 500 stocks by predicted next-quarter relative
   return and evaluate whether a gradient-boosted model beats a linear
   baseline out-of-sample.
 - **Stack:** Python, pandas/NumPy, scikit-learn, LightGBM, WRDS/CRSP.
@@ -28,25 +28,32 @@ overstates performance through survivorship or look-ahead bias.
 ## Results
 
 Produced by a full walk-forward run (60-month rolling train window, 2012–2026,
-467–492 point-in-time S&P 500 members per month) via `output/model_comparison.csv`:
+467–492 point-in-time S&P 500 members per month), predicting **3-month
+forward relative return** (see Design decisions), evaluated on 36
+non-overlapping quarters via `output/model_comparison.csv`:
 
 | Metric                  | Linear (Fama-MacBeth) | LightGBM |
 |--------------------------|:---------------------:|:--------:|
-| Annualized return        | -3.8%                 | -2.1%    |
-| Annualized volatility    | 17.0%                 | 7.7%     |
-| Sharpe ratio             | -0.22                 | -0.27    |
-| Max drawdown             | -63.1%                | -38.5%   |
-| Avg. monthly IC (Spearman) | -0.004               | -0.011   |
-| Avg. monthly turnover    | 0.69                  | 0.75     |
+| Annualized return        | -1.4%                 | 2.8%     |
+| Annualized volatility    | 17.7%                 | 9.4%     |
+| Sharpe ratio             | -0.08                 | 0.30     |
+| Max drawdown             | -49.2%                | -21.1%   |
+| Avg. quarterly IC (Spearman) | -0.011             | 0.004    |
+| Avg. quarterly turnover  | 0.63                  | 0.75     |
 
-**Honest read of these numbers:** both models' Information Coefficient is
-essentially zero — neither has meaningful month-to-month rank-prediction
-skill on this factor set. Winsorizing outliers (see Design decisions) was
-tried as a fix and, reported honestly, didn't produce one: IC is still
-~0 for both models, and it made LightGBM's Sharpe *worse* (was +0.38 before
-winsorizing, now -0.27). That's a real result, not a bug — it suggests the
-near-zero IC reflects a genuinely weak factor set for this universe/horizon,
-not an outlier-driven artifact that a robustness fix could patch over.
+**Honest read of these numbers:** stretching the prediction horizon from
+1 month to 3 (see Design decisions) is the first change so far that moved
+the needle in a meaningful direction. LightGBM's IC turns slightly
+positive (+0.004, vs. -0.004 to -0.011 in every 1-month-horizon variant
+tried earlier) and its Sharpe improves to 0.30 with a much shallower max
+drawdown (-21% vs. -63% for the linear model). That IC is still small in
+absolute terms — this is a weak signal, not a strong one — but it's the
+first result in this project that's directionally consistent with GBM
+capturing *some* real nonlinear structure the linear baseline misses,
+rather than both models being indistinguishable from noise. The linear
+baseline remains flat-to-negative (Sharpe -0.08), which is itself a
+reasonable finding: a purely linear combination of these six price/volume
+factors doesn't earn a risk-adjusted return on this universe.
 
 ## Why point-in-time data matters
 
@@ -99,6 +106,26 @@ documented again in its docstring.
 - **Walk-forward validation only**, never a random train/test split —
   see `model.walk_forward_splits` for the reasoning on purge/embargo
   gaps as the feature set grows.
+- **Forward-return horizon is 3 months, not 1** (`HORIZON = 3` in
+  `main.py`). Monthly stock returns are mostly noise; a 1-month-horizon
+  version of this project (kept in git history) produced IC indistinguishable
+  from zero for both models. This was NOT a drop-in change, because a
+  3-month-forward target creates two problems a 1-month target doesn't:
+  1. **Label leakage at the train/test boundary.** A training row's
+     `fwd_ret` isn't actually "known" until `horizon` months after its
+     feature date. `model.run_walk_forward` embargoes the trailing
+     `horizon - 1` months of each training window (via
+     `walk_forward_splits`' `embargo_months`) so no training label
+     depends on data from inside or after the test period.
+  2. **Overlapping realized-return windows in the backtest.** Evaluating
+     every calendar month with a 3-month-forward label would make
+     consecutive months' `fwd_ret` overlap by 2 of 3 months — compounding
+     those as a sequential return series (as `backtest.performance_summary`
+     does) would badly overstate Sharpe/drawdown. Fixed by setting
+     `test_months=1, step_months=HORIZON` in `run_walk_forward`, so
+     evaluation only takes one snapshot every 3 months and each quarter's
+     return window is adjacent to, not overlapping, the next. `freq=4`
+     (not 12) is passed to `backtest.compare_models` to annualize correctly.
 - **Information Coefficient (Spearman rank correlation), not R²,** is
   the primary evaluation metric, since it evaluates rank order — what
   actually matters for a long-short portfolio built on ranks — rather
@@ -174,5 +201,3 @@ distinguishes a defensible backtest from a leaked one.
 - Fundamentals-based factors (value, quality) with as-reported timing
   to avoid look-ahead leakage
 - Explicit transaction cost model applied to the turnover series
-- Purge/embargo gap in the walk-forward split, if a shorter-window
-  feature is added that could overlap the test period's information set
