@@ -34,6 +34,7 @@ def walk_forward_splits(
     train_months: int = 60,
     test_months: int = 1,
     step_months: int = 1,
+    embargo_months: int = 0,
 ):
     """
     Generator yielding (train_dates, test_dates) tuples.
@@ -44,23 +45,27 @@ def walk_forward_splits(
     keeps the model from being trained on a regime that's no longer
     representative (e.g. pre-2020 volatility structure).
 
-    NOTE ON PURGING: because mom_12m_ex1 uses a 12-month trailing window,
-    a training observation dated one month before the test window
-    technically has features overlapping the test period's information set
-    only in edge cases (its 12m window doesn't reach into the test month
-    itself, since it's already excluding month t-1). This implementation
-    doesn't add an explicit embargo gap because the feature construction
-    already avoids the overlap -- but if you add features with shorter
-    lookback windows relative to your test window size, this is exactly
-    where you'd insert a purge/embargo gap. Naming this reasoning in your
-    write-up is the point, not just having a working generator.
+    NOTE ON PURGING: with a 1-month-forward target, a training observation
+    dated one month before the test window doesn't overlap the test
+    period's information set (mom_12m_ex1's 12m lookback doesn't reach
+    forward into the test month). That assumption breaks once the target
+    itself looks further forward than 1 month: a training row's fwd_ret is
+    only "known" `horizon` months after its feature date, so any training
+    row within `horizon - 1` months of the test start has a label that
+    wouldn't actually be realized yet at test time -- using it anyway is
+    leakage. `embargo_months` drops exactly those trailing training months
+    (run_walk_forward sets it to `horizon - 1` automatically). At
+    embargo_months=0 (the 1-month-horizon default) this is a no-op and
+    behaves exactly as before.
     """
     unique_months = sorted(dates.unique())
     train_months = train_months or len(unique_months)
 
     i = train_months
     while i + test_months <= len(unique_months):
-        train_window = unique_months[max(0, i - train_months):i]
+        train_end = max(0, i - embargo_months)
+        train_start = max(0, train_end - train_months)
+        train_window = unique_months[train_start:train_end]
         test_window = unique_months[i:i + test_months]
         yield train_window, test_window
         i += step_months
@@ -84,20 +89,37 @@ def run_walk_forward(
     model_type: str = "linear",
     train_months: int = 60,
     test_months: int = 1,
+    step_months: int = 1,
+    horizon: int = 1,
 ) -> pd.DataFrame:
     """
     Runs the full walk-forward loop, training a fresh model on each window
-    and generating predictions for the following out-of-sample month.
+    and generating predictions for the following out-of-sample period.
 
     model_type: "linear" (Fama-MacBeth-style baseline) or "gbm" (LightGBM).
+
+    `horizon` must match the horizon used to build `fwd_ret` in
+    features.build_feature_panel -- it's used to embargo training labels
+    that wouldn't actually be known yet at test time (see
+    walk_forward_splits' NOTE ON PURGING). When horizon > 1, keep
+    test_months=1 (one evaluation snapshot per step) and set
+    step_months=horizon, so consecutive test dates are exactly `horizon`
+    months apart and their fwd_ret windows are adjacent, not overlapping.
+    Setting test_months=horizon instead does NOT achieve this -- every
+    calendar month inside that wider test window would still get its own
+    overlapping horizon-month-forward label. Non-overlapping return
+    observations are required for backtest.py to validly compound them as
+    a sequential return series.
 
     Returns a dataframe of out-of-sample predictions with columns:
     [date, permno, fwd_ret, pred] -- this is what backtest.py consumes.
     """
     results = []
+    embargo_months = max(0, horizon - 1)
 
     for train_window, test_window in walk_forward_splits(
-        panel["date"], train_months=train_months, test_months=test_months
+        panel["date"], train_months=train_months, test_months=test_months,
+        step_months=step_months, embargo_months=embargo_months,
     ):
         train = panel[panel["date"].isin(train_window)]
         test = panel[panel["date"].isin(test_window)]
