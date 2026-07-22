@@ -167,13 +167,24 @@ def cross_sectional_normalize(monthly: pd.DataFrame, feature_cols: list[str]) ->
     return monthly
 
 
-def build_feature_panel(daily_panel: pd.DataFrame, membership: pd.DataFrame) -> pd.DataFrame:
-    """Orchestrates the full feature pipeline. Entry point for main.py."""
+def build_feature_panel(
+    daily_panel: pd.DataFrame, membership: pd.DataFrame, horizon: int = 1
+) -> pd.DataFrame:
+    """
+    Orchestrates the full feature pipeline. Entry point for main.py.
+
+    `horizon` controls how many months forward `fwd_ret` looks -- see
+    `add_forward_return_target`. Changing it from the 1-month default
+    changes what the model predicts (e.g. horizon=3 -> next-quarter
+    relative return); model.py's walk-forward split must be given the
+    same horizon so it can embargo training labels that would otherwise
+    overlap the test period (see model.walk_forward_splits docstring).
+    """
     monthly = resample_to_monthly(daily_panel)
     monthly = add_momentum_features(monthly)
     monthly = add_volatility_feature(monthly)
     monthly = add_size_and_liquidity_features(monthly)
-    monthly = add_forward_return_target(monthly, horizon=1)
+    monthly = add_forward_return_target(monthly, horizon=horizon)
 
     # Survivorship-bias fix applied here -- see filter_to_membership docstring
     # for why this happens at this specific point in the pipeline.
