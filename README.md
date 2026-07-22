@@ -22,26 +22,32 @@ overstates performance through survivorship or look-ahead bias.
   free), leakage-aware factor engineering, walk-forward cross-validation,
   rank-based (Information Coefficient) evaluation, long-short decile
   backtesting with turnover analysis.
-- **Status:** pipeline fully implemented (`src/`); end-to-end run against
-  live WRDS data and published results pending — see [Results](#results).
+- **Status:** pipeline fully implemented and run end-to-end against live
+  WRDS/CRSP data (2012–2026) — see [Results](#results).
 
 ## Results
 
-**Not yet available.** The pipeline (below) is fully built and verified
-to compile, but has not been executed end-to-end against live WRDS data,
-so no performance numbers exist yet. This section will be filled in with
-real output from `output/model_comparison.csv` once a full run
-completes — no placeholder or estimated figures are shown in the
-meantime.
+Produced by a full walk-forward run (60-month rolling train window, 2012–2026,
+467–492 point-in-time S&P 500 members per month) via `output/model_comparison.csv`:
 
 | Metric                  | Linear (Fama-MacBeth) | LightGBM |
 |--------------------------|:---------------------:|:--------:|
-| Annualized return        | TBD                   | TBD      |
-| Annualized volatility    | TBD                   | TBD      |
-| Sharpe ratio             | TBD                   | TBD      |
-| Max drawdown             | TBD                   | TBD      |
-| Avg. monthly IC (Spearman) | TBD                 | TBD      |
-| Avg. monthly turnover    | TBD                   | TBD      |
+| Annualized return        | -4.1%                 | 3.2%     |
+| Annualized volatility    | 17.9%                 | 8.4%     |
+| Sharpe ratio             | -0.23                 | 0.38     |
+| Max drawdown             | -63.2%                | -14.1%   |
+| Avg. monthly IC (Spearman) | -0.008               | -0.004   |
+| Avg. monthly turnover    | 0.65                  | 0.75     |
+
+**Honest read of these numbers:** both models' Information Coefficient is
+essentially zero — neither has meaningful month-to-month rank-prediction
+skill on this factor set. LightGBM's positive Sharpe despite a near-zero IC
+suggests its edge (such as it is) comes from a handful of extreme-decile
+calls rather than broad-based ranking accuracy, and the linear model's -63%
+max drawdown is a real weakness, not a data artifact. These are reported as
+produced, without adjustment — a weak-but-honest IC is a more defensible
+result than an inflated one, and is itself informative about how hard this
+factor set is to extract signal from.
 
 ## Why point-in-time data matters
 
