@@ -11,6 +11,7 @@ and point-in-time S&P 500 membership from WRDS.
 
 import pandas as pd
 from pathlib import Path
+from tqdm import tqdm
 
 from features import build_feature_panel
 from model import run_walk_forward, summarize_ic
