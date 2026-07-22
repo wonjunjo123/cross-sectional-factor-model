@@ -32,22 +32,21 @@ Produced by a full walk-forward run (60-month rolling train window, 2012–2026,
 
 | Metric                  | Linear (Fama-MacBeth) | LightGBM |
 |--------------------------|:---------------------:|:--------:|
-| Annualized return        | -4.1%                 | 3.2%     |
-| Annualized volatility    | 17.9%                 | 8.4%     |
-| Sharpe ratio             | -0.23                 | 0.38     |
-| Max drawdown             | -63.2%                | -14.1%   |
-| Avg. monthly IC (Spearman) | -0.008               | -0.004   |
-| Avg. monthly turnover    | 0.65                  | 0.75     |
+| Annualized return        | -3.8%                 | -2.1%    |
+| Annualized volatility    | 17.0%                 | 7.7%     |
+| Sharpe ratio             | -0.22                 | -0.27    |
+| Max drawdown             | -63.1%                | -38.5%   |
+| Avg. monthly IC (Spearman) | -0.004               | -0.011   |
+| Avg. monthly turnover    | 0.69                  | 0.75     |
 
 **Honest read of these numbers:** both models' Information Coefficient is
 essentially zero — neither has meaningful month-to-month rank-prediction
-skill on this factor set. LightGBM's positive Sharpe despite a near-zero IC
-suggests its edge (such as it is) comes from a handful of extreme-decile
-calls rather than broad-based ranking accuracy, and the linear model's -63%
-max drawdown is a real weakness, not a data artifact. These are reported as
-produced, without adjustment — a weak-but-honest IC is a more defensible
-result than an inflated one, and is itself informative about how hard this
-factor set is to extract signal from.
+skill on this factor set. Winsorizing outliers (see Design decisions) was
+tried as a fix and, reported honestly, didn't produce one: IC is still
+~0 for both models, and it made LightGBM's Sharpe *worse* (was +0.38 before
+winsorizing, now -0.27). That's a real result, not a bug — it suggests the
+near-zero IC reflects a genuinely weak factor set for this universe/horizon,
+not an outlier-driven artifact that a robustness fix could patch over.
 
 ## Why point-in-time data matters
 
@@ -104,6 +103,16 @@ documented again in its docstring.
   the primary evaluation metric, since it evaluates rank order — what
   actually matters for a long-short portfolio built on ranks — rather
   than magnitude.
+- **Winsorization is cross-sectional (per month) and asymmetric in scope.**
+  `features.winsorize` clips each feature to its 1st/99th percentile
+  *within that month's cross-section* before z-scoring (`features.py`), so
+  a handful of outliers don't distort the mean/std used to normalize every
+  other stock that month. Separately, `model.py` winsorizes the *training*
+  target only, per month, inside each walk-forward window — evaluation
+  (IC, backtest returns) always uses the true, unwinsorized `fwd_ret`, so
+  robustness applied to fitting never leaks into reported performance. This
+  was tried specifically to address a near-zero IC; it didn't fix it (see
+  Results) — reported as a negative result rather than dropped silently.
 
 ## Known limitations (disclosed, not oversights)
 
