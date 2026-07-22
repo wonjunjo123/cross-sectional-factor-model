@@ -130,6 +130,18 @@ def filter_to_membership(monthly: pd.DataFrame, membership: pd.DataFrame) -> pd.
     return filtered
 
 
+def winsorize(x: pd.Series, lower: float = 0.01, upper: float = 0.99) -> pd.Series:
+    """
+    Clips a series to its [lower, upper] quantiles. A handful of extreme
+    values each month (e.g. an earnings-surprise return, a momentum spike
+    right after a name re-enters the index) can otherwise dominate a
+    cross-section's mean/std, distorting the z-score for every OTHER stock
+    that month -- and OLS is especially sensitive to a few extreme points.
+    """
+    lo, hi = x.quantile(lower), x.quantile(upper)
+    return x.clip(lower=lo, upper=hi)
+
+
 def cross_sectional_normalize(monthly: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
     """
     Z-scores every feature WITHIN each date's cross-section, not across
@@ -138,10 +150,15 @@ def cross_sectional_normalize(monthly: pd.DataFrame, feature_cols: list[str]) ->
     the median INDEX MEMBER that month" -- and because this runs after
     filter_to_membership, "that month" now correctly excludes stocks that
     weren't actually in the index yet/anymore.
+
+    Each feature is winsorized (see `winsorize`) within the same
+    cross-section before the mean/std are computed, so the z-score itself
+    isn't skewed by a few outliers before it's even used.
     """
     monthly = monthly.copy()
 
     def zscore(x):
+        x = winsorize(x)
         return (x - x.mean()) / x.std()
 
     for col in feature_cols:
