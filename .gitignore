@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.DS_Store
+
+# Data files for privacy
+output/feature_panel.parquet
+output/predictions_gbm.parquet
+output/predictions_linear.parquet
+data/raw/membership_prices.csv
+data/prices_wrds.parquet
+data/sp500_membership.parquet
