@@ -96,17 +96,23 @@ def performance_summary(port: pd.DataFrame, freq: int = 12) -> dict:
     }
 
 
-def compare_models(predictions_by_model: dict[str, pd.DataFrame]) -> pd.DataFrame:
+def compare_models(predictions_by_model: dict[str, pd.DataFrame], freq: int = 12) -> pd.DataFrame:
     """
     Runs the full backtest for each model's predictions and returns a
     side-by-side comparison table -- this is the table your write-up's
     "findings" section is built around: does the ML model actually beat
     the linear baseline, and at what turnover cost?
+
+    `freq` is the number of rebalance periods per year, used to annualize
+    return/vol -- 12 for monthly rebalancing, 4 for quarterly, etc. Must
+    match the `test_months`/`step_months` actually used to produce these
+    predictions in model.run_walk_forward, or the annualized numbers below
+    are simply wrong.
     """
     rows = []
     for name, preds in predictions_by_model.items():
         port = compute_portfolio_returns(preds)
-        perf = performance_summary(port)
+        perf = performance_summary(port, freq=freq)
         perf["turnover_mean"] = compute_turnover(preds).mean()
         perf["model"] = name
         rows.append(perf)
