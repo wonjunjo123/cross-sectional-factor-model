@@ -16,6 +16,7 @@ from tqdm import tqdm
 from features import build_feature_panel
 from model import run_walk_forward, summarize_ic
 from backtest import compare_models, performance_summary, compute_portfolio_returns
+from visualize import plot_model_comparison
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
@@ -63,6 +64,7 @@ def main():
     comparison = compare_models(predictions_by_model, freq=12 // HORIZON)
     print(comparison)
     comparison.to_csv(OUTPUT_DIR / "model_comparison.csv")
+    plot_model_comparison(OUTPUT_DIR / "model_comparison.csv", OUTPUT_DIR / "model_comparison.png")
 
 
 if __name__ == "__main__":
