@@ -12,6 +12,8 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from scipy.stats import spearmanr
 
+from features import winsorize
+
 try:
     from lightgbm import LGBMRegressor
     HAS_LGBM = True
@@ -102,6 +104,13 @@ def run_walk_forward(
 
         if len(train) < 100 or len(test) == 0:
             continue
+
+        # Winsorize the TRAINING target only, cross-sectionally per month,
+        # so a handful of extreme-return months don't dominate the fit.
+        # Evaluation still uses the true fwd_ret in y_test (below) -- IC and
+        # backtest performance are never computed on winsorized returns.
+        train = train.copy()
+        train[TARGET_COL] = train.groupby("date")[TARGET_COL].transform(winsorize)
 
         X_train, y_train = train[FEATURE_COLS], train[TARGET_COL]
         X_test, y_test = test[FEATURE_COLS], test[TARGET_COL]
