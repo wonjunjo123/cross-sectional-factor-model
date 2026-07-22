@@ -34,26 +34,38 @@ non-overlapping quarters via `output/model_comparison.csv`:
 
 | Metric                  | Linear (Fama-MacBeth) | LightGBM |
 |--------------------------|:---------------------:|:--------:|
-| Annualized return        | -1.4%                 | 2.8%     |
+| Annualized return (gross)| -1.4%                 | 2.8%     |
 | Annualized volatility    | 17.7%                 | 9.4%     |
-| Sharpe ratio             | -0.08                 | 0.30     |
-| Max drawdown             | -49.2%                | -21.1%   |
+| Sharpe (gross)           | -0.08                 | 0.30     |
+| Sharpe 95% bootstrap CI (gross) | [-0.72, 0.56]   | [-0.37, 0.92] |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.81       | 0.36     |
+| **Annualized return, net of costs** | **-2.5%**   | **1.7%** |
+| **Sharpe, net of costs**  | **-0.14**            | **0.18** |
+| **Sharpe 95% bootstrap CI (net)** | **[-0.87, 0.50]** | **[-0.52, 0.80]** |
+| **Sharpe p-value, net (H0: Sharpe=0)** | **0.67** | **0.59** |
+| Max drawdown (gross / net) | -49.2% / -51.8%     | -21.1% / -25.4% |
 | Avg. quarterly IC (Spearman) | -0.011             | 0.004    |
-| Avg. quarterly turnover  | 0.63                  | 0.75     |
+| Avg. quarterly turnover (long+short) | 1.30        | 1.44     |
+| Assumed round-trip cost | 20 bps per unit of combined long+short turnover |
 
 **Honest read of these numbers:** stretching the prediction horizon from
 1 month to 3 (see Design decisions) is the first change so far that moved
-the needle in a meaningful direction. LightGBM's IC turns slightly
-positive (+0.004, vs. -0.004 to -0.011 in every 1-month-horizon variant
-tried earlier) and its Sharpe improves to 0.30 with a much shallower max
-drawdown (-21% vs. -63% for the linear model). That IC is still small in
-absolute terms — this is a weak signal, not a strong one — but it's the
-first result in this project that's directionally consistent with GBM
-capturing *some* real nonlinear structure the linear baseline misses,
-rather than both models being indistinguishable from noise. The linear
-baseline remains flat-to-negative (Sharpe -0.08), which is itself a
-reasonable finding: a purely linear combination of these six price/volume
-factors doesn't earn a risk-adjusted return on this universe.
+the point estimates in a meaningful direction — LightGBM's IC turns
+slightly positive (+0.004) and its gross Sharpe improves to 0.30 with a
+much shallower max drawdown (-21% vs. -63% for the linear model). **Two
+separate checks then took that gross number apart.** First, the
+significance check: at only 36 non-overlapping quarters, GBM's gross
+Sharpe of 0.30 has a 95% bootstrap CI of [-0.37, 0.92] and a p-value of
+0.36 against H0: Sharpe = 0 — not significant. Second, costs: at a
+conservative 20bps round-trip assumption on ~1.5x combined long+short
+quarterly turnover, GBM's Sharpe drops further to 0.18 (net p-value 0.59,
+*less* significant than gross) and the linear model's already-negative
+Sharpe gets worse. At a lower 10bps assumption GBM's net Sharpe is 0.24
+(p=0.47) — still not significant. **The honest conclusion, after both
+checks: neither model's edge is distinguishable from zero, gross or net,
+at any cost assumption tried.** This project demonstrates a leakage-aware,
+cost-aware, statistically-checked research pipeline — it does not
+demonstrate a validated source of alpha, and shouldn't be described as one.
 
 ## Why point-in-time data matters
 
@@ -140,6 +152,33 @@ documented again in its docstring.
   robustness applied to fitting never leaks into reported performance. This
   was tried specifically to address a near-zero IC; it didn't fix it (see
   Results) — reported as a negative result rather than dropped silently.
+- **Sharpe significance is checked via bootstrap, not asserted from the
+  point estimate.** `backtest.bootstrap_sharpe_test` resamples the
+  quarterly long-short return series (with replacement, 10,000 draws) to
+  build a 95% CI, and separately resamples a zero-mean-shifted version of
+  the same series to get a p-value for H0: Sharpe = 0. An i.i.d. bootstrap
+  like this is only valid on a NON-OVERLAPPING return series — exactly why
+  the horizon change above went to the trouble of making evaluation
+  quarterly rather than monthly-with-overlap. The two outputs answer
+  different questions (CI: how wide is the uncertainty; p-value: can we
+  reject "no edge") and are both reported because a small sample (n=36)
+  can show a wide CI while still failing to reject the null — which is
+  exactly what happened here (see Results).
+- **Transaction costs are sized to actual measured turnover, not a flat
+  haircut.** `backtest.apply_transaction_costs` computes long-leg AND
+  short-leg turnover separately each quarter (`compute_turnover` now takes
+  a `decile` argument for this) and charges an assumed round-trip cost
+  (basis points per unit of combined long+short turnover — 20bps default,
+  a conservative estimate for liquid large-cap names, not a microstructure
+  model) against that period's realized return. The very first period is
+  charged as 100% turnover on both legs (a full initial buy-in), not 0%,
+  since a free first trade would understate costs. Net-of-cost return,
+  Sharpe, drawdown, and a separate bootstrap significance check on the net
+  Sharpe are all reported alongside the gross figures (see Results) —
+  costs and statistical significance are evaluated independently since a
+  gross edge that's already insignificant only gets worse net of costs,
+  and collapsing the two checks into one number would hide which one is
+  doing the damage.
 
 ## Known limitations (disclosed, not oversights)
 
@@ -200,4 +239,21 @@ distinguishes a defensible backtest from a leaked one.
 
 - Fundamentals-based factors (value, quality) with as-reported timing
   to avoid look-ahead leakage
-- Explicit transaction cost model applied to the turnover series
+- ~~Statistical significance check on the Sharpe/IC~~ **Done** — see
+  `backtest.bootstrap_sharpe_test` and Design decisions. Result: neither
+  model's Sharpe is statistically distinguishable from zero at n=36
+  quarters (see Results). This is now a checked, reported finding, not an
+  open item.
+- ~~Back-of-envelope transaction cost estimate~~ **Done** — see
+  `backtest.apply_transaction_costs` and Design decisions. Result: at a
+  20bps round-trip assumption, GBM's gross Sharpe of 0.30 (already not
+  significant) drops to a net 0.18 (p=0.59, even less significant); at
+  10bps, net Sharpe is 0.24 (p=0.47) — still not significant either way
+  (see Results).
+- **Keep the pitch scoped to what this actually demonstrates.** Momentum,
+  size, vol, and liquidity are a standard, Fama-French-adjacent factor
+  set — appropriate for demonstrating a leakage-aware, point-in-time
+  research pipeline, but not novel alpha. The write-up/resume framing
+  should stay "correct research process," not "found alpha" — reinforced,
+  not undercut, by the fact that the significance check above came back
+  negative.
