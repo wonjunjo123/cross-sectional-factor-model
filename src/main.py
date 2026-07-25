@@ -32,7 +32,7 @@ def main():
     print("Loading CRSP price panel and point-in-time membership...")
     daily_panel = pd.read_parquet(DATA_DIR / "prices_wrds.parquet")
     membership = pd.read_parquet(DATA_DIR / "sp500_membership.parquet")
-
+    
     print("Building feature panel...")
     feature_panel = build_feature_panel(daily_panel, membership, horizon=HORIZON)
     print(f"Feature panel shape: {feature_panel.shape}")
@@ -65,7 +65,6 @@ def main():
     print(comparison)
     comparison.to_csv(OUTPUT_DIR / "model_comparison.csv")
     plot_model_comparison(OUTPUT_DIR / "model_comparison.csv", OUTPUT_DIR / "model_comparison.png")
-
-
+    
 if __name__ == "__main__":
     main()
