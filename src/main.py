@@ -16,7 +16,7 @@ from tqdm import tqdm
 from features import build_feature_panel
 from model import run_walk_forward, summarize_ic
 from backtest import compare_models, performance_summary, compute_portfolio_returns
-from visualize import plot_model_comparison
+from visualize import plot_model_comparison, plot_ic_timeseries
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
@@ -46,6 +46,7 @@ def main():
     feature_panel.to_parquet(OUTPUT_DIR / "feature_panel.parquet", index=False)
 
     predictions_by_model = {}
+    ic_by_model = {}
 
     for model_type in ["linear", "gbm"]:
         print(f"\nRunning walk-forward for model: {model_type}")
@@ -56,7 +57,9 @@ def main():
         predictions_by_model[model_type] = preds
 
         print(f"-- {model_type} IC summary --")
-        summarize_ic(preds)
+        ic = summarize_ic(preds)
+        ic_by_model[model_type] = ic
+        ic.to_csv(OUTPUT_DIR / f"ic_{model_type}.csv", index=False)
 
         preds.to_parquet(OUTPUT_DIR / f"predictions_{model_type}.parquet", index=False)
 
@@ -65,6 +68,7 @@ def main():
     print(comparison)
     comparison.to_csv(OUTPUT_DIR / "model_comparison.csv")
     plot_model_comparison(OUTPUT_DIR / "model_comparison.csv", OUTPUT_DIR / "model_comparison.png")
-    
+    plot_ic_timeseries(ic_by_model, OUTPUT_DIR / "ic_timeseries.png")
+
 if __name__ == "__main__":
     main()
