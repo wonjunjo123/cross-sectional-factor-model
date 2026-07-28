@@ -196,10 +196,10 @@ def compare_models(
 ) -> pd.DataFrame:
     """
     Runs the full backtest for each model's predictions and returns a
-    side-by-side comparison table -- this is the table your write-up's
-    "findings" section is built around: does the ML model actually beat
-    the linear baseline, net of realistic trading costs, and is that edge
-    even statistically distinguishable from zero?
+    performance table -- this is the table your write-up's "findings"
+    section is built around: does the model have a real edge, net of
+    realistic trading costs, and is that edge even statistically
+    distinguishable from zero?
 
     `freq` is the number of rebalance periods per year, used to annualize
     return/vol -- 12 for monthly rebalancing, 4 for quarterly, etc. Must
