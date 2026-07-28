@@ -45,9 +45,10 @@ def main():
     feature_panel.to_parquet(OUTPUT_DIR / "feature_panel.parquet", index=False)
 
     print("\nRunning walk-forward for the LightGBM ranker...")
-    preds = run_walk_forward(
-        feature_panel, horizon=HORIZON, test_months=1, step_months=HORIZON,
-    )
+    
+    # Returns a dataframe of out-of-sample predictions with columns: [date, permno, fwd_ret, pred]
+    # this is what backtest.py consumes
+    preds = run_walk_forward(feature_panel, test_months=1, step_months=HORIZON, horizon=HORIZON)
 
     print("-- IC summary --")
     ic = summarize_ic(preds)

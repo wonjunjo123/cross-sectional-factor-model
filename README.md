@@ -1,10 +1,9 @@
 # Point-in-Time Cross-Sectional Factor Model
 
 A quantitative equity research project that ranks S&P 500 stocks by
-predicted next-quarter (3-month) relative return, comparing a linear
-(Fama-MacBeth-style) baseline against a gradient-boosted (LightGBM)
-model on the same factor set, and backtesting a long-short decile
-portfolio built on the resulting rankings.
+predicted next-quarter (3-month) relative return using a gradient-boosted
+(LightGBM) model trained with a learning-to-rank objective, and
+backtests a long-short decile portfolio built on the resulting rankings.
 
 Built to demonstrate the modeling and data-hygiene practices used in
 quantitative equity research: point-in-time universe construction,
@@ -15,13 +14,14 @@ overstates performance through survivorship or look-ahead bias.
 ## At a glance
 
 - **Objective:** rank S&P 500 stocks by predicted next-quarter relative
-  return and evaluate whether a gradient-boosted model beats a linear
-  baseline out-of-sample.
-- **Stack:** Python, pandas/NumPy, scikit-learn, LightGBM, WRDS/CRSP.
+  return and evaluate the ranking's out-of-sample quality via Information
+  Coefficient and a long-short backtest.
+- **Stack:** Python, pandas/NumPy, LightGBM, WRDS/CRSP.
 - **Techniques:** point-in-time universe construction (survivorship-bias
   free), leakage-aware factor engineering, walk-forward cross-validation,
-  rank-based (Information Coefficient) evaluation, long-short decile
-  backtesting with turnover analysis.
+  a learning-to-rank (`lambdarank`) training objective, rank-based
+  (Information Coefficient) evaluation, long-short decile backtesting
+  with turnover analysis.
 - **Status:** pipeline fully implemented and run end-to-end against live
   WRDS/CRSP data (2012–2026) — see [Results](#results).
 
@@ -32,40 +32,32 @@ Produced by a full walk-forward run (60-month rolling train window, 2012–2026,
 forward relative return** (see Design decisions), evaluated on 36
 non-overlapping quarters via `output/model_comparison.csv`:
 
-| Metric                  | Linear (Fama-MacBeth) | LightGBM |
-|--------------------------|:---------------------:|:--------:|
-| Annualized return (gross)| -1.4%                 | 2.8%     |
-| Annualized volatility    | 17.7%                 | 9.4%     |
-| Sharpe (gross)           | -0.08                 | 0.30     |
-| Sharpe 95% bootstrap CI (gross) | [-0.72, 0.56]   | [-0.37, 0.92] |
-| Sharpe p-value, gross (H0: Sharpe=0) | 0.81       | 0.36     |
-| **Annualized return, net of costs** | **-2.5%**   | **1.7%** |
-| **Sharpe, net of costs**  | **-0.14**            | **0.18** |
-| **Sharpe 95% bootstrap CI (net)** | **[-0.87, 0.50]** | **[-0.52, 0.80]** |
-| **Sharpe p-value, net (H0: Sharpe=0)** | **0.67** | **0.59** |
-| Max drawdown (gross / net) | -49.2% / -51.8%     | -21.1% / -25.4% |
-| Avg. quarterly IC (Spearman) | -0.011             | 0.004    |
-| Avg. quarterly turnover (long+short) | 1.30        | 1.44     |
-| Assumed round-trip cost | 20 bps per unit of combined long+short turnover |
+| Metric                          | LightGBM (`lambdarank`) |
+|----------------------------------|:------------------------:|
+| Annualized return (gross)        | 1.5%                     |
+| Annualized volatility             | 18.5%                    |
+| Sharpe (gross)                    | 0.08                     |
+| Sharpe 95% bootstrap CI (gross)   | [-0.72, 0.66]            |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.82                  |
+| **Annualized return, net of costs** | **0.4%**               |
+| **Sharpe, net of costs**          | **0.02**                 |
+| **Sharpe 95% bootstrap CI (net)** | **[-0.80, 0.60]**        |
+| **Sharpe p-value, net (H0: Sharpe=0)** | **0.95**            |
+| Max drawdown (gross / net)        | -37.8% / -40.6%          |
+| Avg. quarterly IC (Spearman)      | -0.010                   |
+| Avg. quarterly turnover (long+short) | 1.32                  |
+| Assumed round-trip cost           | 20 bps per unit of combined long+short turnover |
 
-**Honest read of these numbers:** stretching the prediction horizon from
-1 month to 3 (see Design decisions) is the first change so far that moved
-the point estimates in a meaningful direction — LightGBM's IC turns
-slightly positive (+0.004) and its gross Sharpe improves to 0.30 with a
-much shallower max drawdown (-21% vs. -63% for the linear model). **Two
-separate checks then took that gross number apart.** First, the
-significance check: at only 36 non-overlapping quarters, GBM's gross
-Sharpe of 0.30 has a 95% bootstrap CI of [-0.37, 0.92] and a p-value of
-0.36 against H0: Sharpe = 0 — not significant. Second, costs: at a
-conservative 20bps round-trip assumption on ~1.5x combined long+short
-quarterly turnover, GBM's Sharpe drops further to 0.18 (net p-value 0.59,
-*less* significant than gross) and the linear model's already-negative
-Sharpe gets worse. At a lower 10bps assumption GBM's net Sharpe is 0.24
-(p=0.47) — still not significant. **The honest conclusion, after both
-checks: neither model's edge is distinguishable from zero, gross or net,
-at any cost assumption tried.** This project demonstrates a leakage-aware,
-cost-aware, statistically-checked research pipeline — it does not
-demonstrate a validated source of alpha, and shouldn't be described as one.
+**Honest read of these numbers:** IC is essentially zero (-0.010), and
+neither the gross nor net Sharpe clears statistical significance — at
+only 36 non-overlapping quarters, the gross Sharpe of 0.08 has a 95%
+bootstrap CI of [-0.72, 0.66] and a p-value of 0.82 against H0: Sharpe =
+0, and net of a conservative 20bps round-trip cost it's weaker still
+(Sharpe 0.02, p=0.95). **The honest conclusion: this model shows no
+edge that's distinguishable from zero, gross or net.** This project
+demonstrates a leakage-aware, cost-aware, statistically-checked research
+pipeline — it does not demonstrate a validated source of alpha, and
+shouldn't be described as one.
 
 ## Why point-in-time data matters
 
@@ -121,7 +113,7 @@ documented again in its docstring.
 - **Forward-return horizon is 3 months, not 1** (`HORIZON = 3` in
   `main.py`). Monthly stock returns are mostly noise; a 1-month-horizon
   version of this project (kept in git history) produced IC indistinguishable
-  from zero for both models. This was NOT a drop-in change, because a
+  from zero. This was NOT a drop-in change, because a
   3-month-forward target creates two problems a 1-month target doesn't:
   1. **Label leakage at the train/test boundary.** A training row's
      `fwd_ret` isn't actually "known" until `horizon` months after its
@@ -142,6 +134,23 @@ documented again in its docstring.
   the primary evaluation metric, since it evaluates rank order — what
   actually matters for a long-short portfolio built on ranks — rather
   than magnitude.
+- **The model trains on a rank objective (`lambdarank`), not L2 regression
+  on `fwd_ret`.** An earlier version used `LGBMRegressor`, minimizing
+  squared error on raw (training-winsorized) returns, pooled across the
+  whole training window. That was a mismatch: IC and the decile long-short
+  portfolio only ever care about a stock's rank *within its own month*,
+  not the pointwise return magnitude, and a pooled L2 loss conflates
+  "which months had high average returns" (time-series signal) with
+  "which stocks beat their peers that month" (the only signal the
+  portfolio trades). `model.run_walk_forward` trains with
+  `LGBMRanker(objective="lambdarank")` instead, where the label is each
+  stock's `fwd_ret` decile *within its own date* (matching the deciles
+  `backtest.py` actually trades) and `group` marks each date's
+  cross-section boundary so ranking pairs are never compared across
+  months. The result (kept in git history for the L2 comparison): the
+  theoretically better-motivated objective did *not* improve the model's
+  numbers — IC and Sharpe both got slightly worse — reported as a
+  negative result, same as the winsorization experiment below.
 - **Winsorization is cross-sectional (per month) and asymmetric in scope.**
   `features.winsorize` clips each feature to its 1st/99th percentile
   *within that month's cross-section* before z-scoring (`features.py`), so
@@ -199,22 +208,21 @@ documented again in its docstring.
    membership filter, cross-sectionally z-scores, builds the forward-
    return target
 3. `model.py` — walk-forward (rolling-window) cross-validation; trains a
-   linear baseline and a LightGBM model on each window; scores
+   LightGBM ranking model (`lambdarank` objective) on each window; scores
    predictions using the Information Coefficient (Spearman rank
    correlation)
 4. `backtest.py` — builds a long top-decile / short bottom-decile
-   portfolio from each model's predictions; computes annualized return,
-   volatility, Sharpe, max drawdown, and turnover; compares models
-   side-by-side
+   portfolio from the model's predictions; computes annualized return,
+   volatility, Sharpe, max drawdown, and turnover
 5. `main.py` — runs the full pipeline end to end
 
 ## Running this project
 
 ```bash
-pip install pandas numpy scikit-learn scipy lightgbm wrds pyarrow
+pip install pandas numpy scipy lightgbm wrds pyarrow matplotlib
 
 python src/data_prep.py <wrds_username>   # one-time WRDS pull
-python src/main.py                        # features -> models -> backtest -> comparison
+python src/main.py                        # features -> model -> backtest -> performance summary
 ```
 
 `data_prep.py` requires a WRDS account and will prompt for a password on
@@ -228,28 +236,35 @@ instance before pulling data.
 ## What the results answer
 
 The core question this project is built to answer isn't "did the
-strategy make money," but a calibrated comparison: does the nonlinear
-(LightGBM) model improve Information Coefficient and Sharpe ratio over
-the linear baseline, and at what turnover cost? That trade-off — stated
-plainly, alongside the point-in-time universe construction that avoids
-overstating the result — is the intended takeaway, and is what
-distinguishes a defensible backtest from a leaked one.
+strategy make money," but a calibrated one: does this model's ranking
+show real, statistically-significant predictive power (Information
+Coefficient, Sharpe ratio) once evaluated out-of-sample and after
+turnover cost, or does it just look good gross and pre-cost? That
+question — stated plainly, alongside the point-in-time universe
+construction that avoids overstating the result — is the intended
+takeaway, and is what distinguishes a defensible backtest from a leaked
+one.
 
 ## Possible extensions
 
 - Fundamentals-based factors (value, quality) with as-reported timing
   to avoid look-ahead leakage
 - ~~Statistical significance check on the Sharpe/IC~~ **Done** — see
-  `backtest.bootstrap_sharpe_test` and Design decisions. Result: neither
-  model's Sharpe is statistically distinguishable from zero at n=36
+  `backtest.bootstrap_sharpe_test` and Design decisions. Result: the
+  model's Sharpe is not statistically distinguishable from zero at n=36
   quarters (see Results). This is now a checked, reported finding, not an
   open item.
 - ~~Back-of-envelope transaction cost estimate~~ **Done** — see
   `backtest.apply_transaction_costs` and Design decisions. Result: at a
-  20bps round-trip assumption, GBM's gross Sharpe of 0.30 (already not
-  significant) drops to a net 0.18 (p=0.59, even less significant); at
-  10bps, net Sharpe is 0.24 (p=0.47) — still not significant either way
-  (see Results).
+  20bps round-trip assumption, the model's gross Sharpe of 0.08 (already
+  not significant) drops to a net 0.02 (p=0.95, even less significant);
+  at 10bps, net Sharpe is 0.05 (p=0.89) — still not significant either
+  way (see Results).
+- ~~Fix the training objective/eval mismatch~~ **Done** — see Design
+  decisions ("The model trains on a rank objective"). Result: switching
+  from L2 regression to a `lambdarank` objective grouped by date made IC
+  and Sharpe slightly *worse*, not better (see Results) — reported as a
+  negative result, not reverted.
 - **Keep the pitch scoped to what this actually demonstrates.** Momentum,
   size, vol, and liquidity are a standard, Fama-French-adjacent factor
   set — appropriate for demonstrating a leakage-aware, point-in-time
