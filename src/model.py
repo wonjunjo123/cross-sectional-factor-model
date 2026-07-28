@@ -21,7 +21,8 @@ FEATURE_COLS = [
 ]
 TARGET_COL = "fwd_ret"
 
-
+# creates the (train_dates, test_dates) tuples that 
+# each are a list of TimeStamps that we want to train and test on
 def walk_forward_splits(
     dates: pd.Series,
     train_months: int = 60,
@@ -52,7 +53,8 @@ def walk_forward_splits(
     behaves exactly as before.
     """
     unique_months = sorted(dates.unique())
-    train_months = train_months or len(unique_months)
+    
+    train_months = train_months or len(unique_months) # way to set default if train_months is non-zero/NaN/Empty
 
     i = train_months
     while i + test_months <= len(unique_months):
@@ -60,7 +62,7 @@ def walk_forward_splits(
         train_start = max(0, train_end - train_months)
         train_window = unique_months[train_start:train_end]
         test_window = unique_months[i:i + test_months]
-        yield train_window, test_window
+        yield train_window, test_window # this is what makes it a generator object
         i += step_months
 
 
@@ -105,16 +107,25 @@ def run_walk_forward(
     Returns a dataframe of out-of-sample predictions with columns:
     [date, permno, fwd_ret, pred] -- this is what backtest.py consumes.
     """
+    
+    # here, panel is the feature_panel
+    # train_months = 60 is the rolling lookback window for training
     results = []
     embargo_months = max(0, horizon - 1)
-
+    
+    # each train_window ends up being a list of Timestamp objects of the 60 months trailing months to train on
+    # each test_window is a list of Timestamp object, 3 months after final training month (based on test_month=1, horizon=3)
+    
+    # So however many sliding windows are available in 
     for train_window, test_window in walk_forward_splits(
         panel["date"], train_months=train_months, test_months=test_months,
-        step_months=step_months, embargo_months=embargo_months,
-    ):
-        train = panel[panel["date"].isin(train_window)]
+        step_months=step_months, embargo_months=embargo_months):
+        
+        # these are pure rows from feature_panel with correct windows
+        train = panel[panel["date"].isin(train_window)] # pulls rows from only train_window
         test = panel[panel["date"].isin(test_window)]
-
+        
+        # skip if training data is too little or there is no test window
         if len(train) < 100 or len(test) == 0:
             continue
 
@@ -125,9 +136,18 @@ def run_walk_forward(
         # Sorted by date so that rows sharing a date are contiguous -- GBM's
         # per-date `group` boundaries below require that.
         train = train.copy().sort_values("date")
+        
+        # we group by the date, only extract the fwd_ret (the label) and then
+        # winsorize per cross section... the thresholds are different for each cross section
+        # we are overriding previous value with the clamped (winsorized) values
         train[TARGET_COL] = train.groupby("date")[TARGET_COL].transform(winsorize)
-
+        
+        # we are going to train on these cross-sectional vectors
+        # they are stripped off PERMNO, purely the factors in each row
         X_train = train[FEATURE_COLS]
+        
+        # X_test also is just purely the factors
+        # y_test is purely the fwd_ret
         X_test, y_test = test[FEATURE_COLS], test[TARGET_COL]
 
         # Plain L2 regression on fwd_ret optimizes predicted RETURN
@@ -138,10 +158,17 @@ def run_walk_forward(
         # deciles backtest.py actually trades), and `group` tells LightGBM
         # where one date's cross-section ends and the next begins so ranking
         # pairs are never compared across dates.
+        
+        # train_group is an array containing the number of stocks per each training month
         train_group = train.groupby("date").size().to_numpy()
+        
+        # turns each stock's continuous fwd_ret into a decile label (0-9 within its own month)
+        # LGBMRanker is learning to predict the rank based on the factors, not the return
+        # Basically, the model will say, based on these factors, this stock will be nth rank this month
         rank_label = train.groupby("date")[TARGET_COL].transform(
             lambda s: pd.qcut(s, 10, labels=False, duplicates="drop")
-        )
+        ) # ultimately these are the targets
+        
         model = LGBMRanker(
             objective="lambdarank", n_estimators=200, max_depth=4,
             learning_rate=0.05, min_child_samples=30, verbosity=-1,
