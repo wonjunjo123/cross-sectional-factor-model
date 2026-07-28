@@ -11,6 +11,7 @@ import pandas as pd
 import numpy as np
 from lightgbm import LGBMRanker
 from scipy.stats import spearmanr
+from tqdm import tqdm
 
 from features import winsorize
 
@@ -78,7 +79,7 @@ def information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     ic, _ = spearmanr(y_pred, y_true)
     return ic
 
-
+# this is really the train() method but in a walk-forward fashion
 def run_walk_forward(
     panel: pd.DataFrame,
     train_months: int = 60,
@@ -117,9 +118,9 @@ def run_walk_forward(
     # each test_window is a list of Timestamp object, 3 months after final training month (based on test_month=1, horizon=3)
     
     # So however many sliding windows are available in 
-    for train_window, test_window in walk_forward_splits(
+    for train_window, test_window in tqdm(walk_forward_splits(
         panel["date"], train_months=train_months, test_months=test_months,
-        step_months=step_months, embargo_months=embargo_months):
+        step_months=step_months, embargo_months=embargo_months)):
         
         # these are pure rows from feature_panel with correct windows
         train = panel[panel["date"].isin(train_window)] # pulls rows from only train_window
@@ -160,6 +161,9 @@ def run_walk_forward(
         # pairs are never compared across dates.
         
         # train_group is an array containing the number of stocks per each training month
+        # we do this to tell LightGBM where one month's cross-section ends
+        # and the next begins, so a stock is only ever compared against
+        # its own month's peers — never ranked against a different month.
         train_group = train.groupby("date").size().to_numpy()
         
         # turns each stock's continuous fwd_ret into a decile label (0-9 within its own month)
@@ -167,11 +171,13 @@ def run_walk_forward(
         # Basically, the model will say, based on these factors, this stock will be nth rank this month
         rank_label = train.groupby("date")[TARGET_COL].transform(
             lambda s: pd.qcut(s, 10, labels=False, duplicates="drop")
+            # qcut is a quantile-based binning, and we are using 10 for deciles
+            # labels=False makes it return ints 0~9 instead of interval objects like (0.01,0.05]
         ) # ultimately these are the targets
         
         model = LGBMRanker(
-            objective="lambdarank", n_estimators=200, max_depth=4,
-            learning_rate=0.05, min_child_samples=30, verbosity=-1,
+            objective="lambdarank", n_estimators=100, max_depth=5,
+            learning_rate=0.01, min_child_samples=30, verbosity=-1,
         )
         model.fit(X_train, rank_label, group=train_group)
 

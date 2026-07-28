@@ -44,7 +44,7 @@ def main():
     OUTPUT_DIR.mkdir(exist_ok=True)
     feature_panel.to_parquet(OUTPUT_DIR / "feature_panel.parquet", index=False)
 
-    print("\nRunning walk-forward for the LightGBM ranker...")
+    print("Training LightGBM ranker on walk-forward...")
     
     # Returns a dataframe of out-of-sample predictions with columns: [date, permno, fwd_ret, pred]
     # this is what backtest.py consumes
