@@ -198,6 +198,19 @@ documented again in its docstring.
   leakage.
 - **Transaction costs are not modeled directly.** Turnover is reported
   explicitly instead, as the input needed to estimate cost impact.
+- **LightGBM hyperparameters are untuned.** `n_estimators=200, max_depth=4,
+  learning_rate=0.05, min_child_samples=30` (`model.run_walk_forward`) are
+  plausible-looking defaults, not the result of any search — there's no
+  hyperparameter tuning code anywhere in this repo. They originated on the
+  old `LGBMRegressor` baseline and were carried over unchanged onto
+  `LGBMRanker` when the training objective switched to `lambdarank` (see
+  Design decisions), specifically so that A/B comparison wasn't confounded
+  by also changing model capacity — a defensible reason for *that*
+  experiment, but not evidence the values are actually good. Tuning them
+  properly would need an inner validation split within each walk-forward
+  training window (none exists currently — `run_walk_forward` only ever
+  does train → predict on the immediate next test period), which is a
+  natural next step, not yet done.
 
 ## Pipeline
 
