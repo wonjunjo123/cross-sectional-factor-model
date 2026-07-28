@@ -1,9 +1,9 @@
 """
 main.py
 
-End-to-end orchestration: data -> features -> walk-forward models ->
-backtest comparison. Run this after data_prep.py has pulled CRSP prices
-and point-in-time S&P 500 membership from WRDS.
+End-to-end orchestration: data -> features -> walk-forward model ->
+backtest. Run this after data_prep.py has pulled CRSP prices and
+point-in-time S&P 500 membership from WRDS.
 
     python src/data_prep.py <wrds_username>   # one-time WRDS pull, caches to data/
     python src/main.py                        # runs the full research pipeline
@@ -11,11 +11,10 @@ and point-in-time S&P 500 membership from WRDS.
 
 import pandas as pd
 from pathlib import Path
-from tqdm import tqdm
 
 from features import build_feature_panel
 from model import run_walk_forward, summarize_ic
-from backtest import compare_models, performance_summary, compute_portfolio_returns
+from backtest import compare_models
 from visualize import plot_model_comparison, plot_ic_timeseries
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -45,30 +44,23 @@ def main():
     OUTPUT_DIR.mkdir(exist_ok=True)
     feature_panel.to_parquet(OUTPUT_DIR / "feature_panel.parquet", index=False)
 
-    predictions_by_model = {}
-    ic_by_model = {}
+    print("\nRunning walk-forward for the LightGBM ranker...")
+    preds = run_walk_forward(
+        feature_panel, horizon=HORIZON, test_months=1, step_months=HORIZON,
+    )
 
-    for model_type in ["linear", "gbm"]:
-        print(f"\nRunning walk-forward for model: {model_type}")
-        preds = run_walk_forward(
-            feature_panel, model_type=model_type,
-            horizon=HORIZON, test_months=1, step_months=HORIZON,
-        )
-        predictions_by_model[model_type] = preds
+    print("-- IC summary --")
+    ic = summarize_ic(preds)
+    ic.to_csv(OUTPUT_DIR / "ic_gbm.csv", index=False)
 
-        print(f"-- {model_type} IC summary --")
-        ic = summarize_ic(preds)
-        ic_by_model[model_type] = ic
-        ic.to_csv(OUTPUT_DIR / f"ic_{model_type}.csv", index=False)
+    preds.to_parquet(OUTPUT_DIR / "predictions_gbm.parquet", index=False)
 
-        preds.to_parquet(OUTPUT_DIR / f"predictions_{model_type}.parquet", index=False)
-
-    print("\n--- Model comparison ---")
-    comparison = compare_models(predictions_by_model, freq=12 // HORIZON)
-    print(comparison)
-    comparison.to_csv(OUTPUT_DIR / "model_comparison.csv")
+    print("\n--- Performance summary ---")
+    summary = compare_models({"gbm": preds}, freq=12 // HORIZON)
+    print(summary)
+    summary.to_csv(OUTPUT_DIR / "model_comparison.csv")
     plot_model_comparison(OUTPUT_DIR / "model_comparison.csv", OUTPUT_DIR / "model_comparison.png")
-    plot_ic_timeseries(ic_by_model, OUTPUT_DIR / "ic_timeseries.png")
+    plot_ic_timeseries({"gbm": ic}, OUTPUT_DIR / "ic_timeseries.png")
 
 if __name__ == "__main__":
     main()

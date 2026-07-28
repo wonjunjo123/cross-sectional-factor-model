@@ -9,17 +9,10 @@ backtest and a leaked one.
 
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression
+from lightgbm import LGBMRanker
 from scipy.stats import spearmanr
 
 from features import winsorize
-
-try:
-    from lightgbm import LGBMRegressor
-    HAS_LGBM = True
-except ImportError:
-    HAS_LGBM = False
-    print("lightgbm not installed -- pip install lightgbm to use the GBM model")
 
 
 FEATURE_COLS = [
@@ -86,17 +79,15 @@ def information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 def run_walk_forward(
     panel: pd.DataFrame,
-    model_type: str = "linear",
     train_months: int = 60,
     test_months: int = 1,
     step_months: int = 1,
     horizon: int = 1,
 ) -> pd.DataFrame:
     """
-    Runs the full walk-forward loop, training a fresh model on each window
-    and generating predictions for the following out-of-sample period.
-
-    model_type: "linear" (Fama-MacBeth-style baseline) or "gbm" (LightGBM).
+    Runs the full walk-forward loop, training a fresh LightGBM ranker on
+    each window and generating predictions for the following out-of-sample
+    period.
 
     `horizon` must match the horizon used to build `fwd_ret` in
     features.build_feature_panel -- it's used to embargo training labels
@@ -131,25 +122,32 @@ def run_walk_forward(
         # so a handful of extreme-return months don't dominate the fit.
         # Evaluation still uses the true fwd_ret in y_test (below) -- IC and
         # backtest performance are never computed on winsorized returns.
-        train = train.copy()
+        # Sorted by date so that rows sharing a date are contiguous -- GBM's
+        # per-date `group` boundaries below require that.
+        train = train.copy().sort_values("date")
         train[TARGET_COL] = train.groupby("date")[TARGET_COL].transform(winsorize)
 
-        X_train, y_train = train[FEATURE_COLS], train[TARGET_COL]
+        X_train = train[FEATURE_COLS]
         X_test, y_test = test[FEATURE_COLS], test[TARGET_COL]
 
-        if model_type == "linear":
-            model = LinearRegression()
-        elif model_type == "gbm":
-            if not HAS_LGBM:
-                raise ImportError("lightgbm not installed")
-            model = LGBMRegressor(
-                n_estimators=200, max_depth=4, learning_rate=0.05,
-                min_child_samples=30, verbosity=-1,
-            )
-        else:
-            raise ValueError(f"Unknown model_type: {model_type}")
+        # Plain L2 regression on fwd_ret optimizes predicted RETURN
+        # MAGNITUDE, pooled across the whole training window -- but IC and
+        # the decile long-short portfolio only care about rank ORDER within
+        # each month. lambdarank optimizes that directly: the training label
+        # is each stock's fwd_ret DECILE within its own date (matching the
+        # deciles backtest.py actually trades), and `group` tells LightGBM
+        # where one date's cross-section ends and the next begins so ranking
+        # pairs are never compared across dates.
+        train_group = train.groupby("date").size().to_numpy()
+        rank_label = train.groupby("date")[TARGET_COL].transform(
+            lambda s: pd.qcut(s, 10, labels=False, duplicates="drop")
+        )
+        model = LGBMRanker(
+            objective="lambdarank", n_estimators=200, max_depth=4,
+            learning_rate=0.05, min_child_samples=30, verbosity=-1,
+        )
+        model.fit(X_train, rank_label, group=train_group)
 
-        model.fit(X_train, y_train)
         preds = model.predict(X_test)
 
         out = test[["date", "permno", TARGET_COL]].copy()
