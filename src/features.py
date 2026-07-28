@@ -56,7 +56,8 @@ def resample_to_monthly(panel: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
     monthly["date"] = monthly["month"].dt.to_timestamp("M")
-    return monthly.drop(columns="month").sort_values(["permno", "date"])
+
+    return monthly.drop(columns="month").sort_values(["date","permno"])
 
 
 def add_momentum_features(monthly: pd.DataFrame) -> pd.DataFrame:
@@ -136,7 +137,7 @@ def winsorize(x: pd.Series, lower: float = 0.01, upper: float = 0.99) -> pd.Seri
     values each month (e.g. an earnings-surprise return, a momentum spike
     right after a name re-enters the index) can otherwise dominate a
     cross-section's mean/std, distorting the z-score for every OTHER stock
-    that month -- and OLS is especially sensitive to a few extreme points.
+    that month.
     """
     lo, hi = x.quantile(lower), x.quantile(upper)
     return x.clip(lower=lo, upper=hi)

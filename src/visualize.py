@@ -21,10 +21,8 @@ from pathlib import Path
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
-# Categorical slots, fixed order (matches the order models appear in the
-# comparison table): slot 1 blue = linear, slot 2 orange = gbm.
-COLORS = {"linear": "#2a78d6", "gbm": "#eb6834"}
-MODEL_LABELS = {"linear": "Linear (Fama-MacBeth)", "gbm": "LightGBM"}
+COLORS = {"gbm": "#2a78d6"}
+MODEL_LABELS = {"gbm": "LightGBM"}
 
 INK = "#0b0b0b"
 INK_SECONDARY = "#52514e"
@@ -113,7 +111,7 @@ def plot_model_comparison(csv_path=None, out_path=None):
     df = pd.read_csv(csv_path, index_col="model")
 
     fig, axes = plt.subplots(2, 2, figsize=(11, 8), facecolor=SURFACE)
-    fig.suptitle("Model comparison: gross vs. net of transaction costs",
+    fig.suptitle("Backtest performance: gross vs. net of transaction costs",
                  fontsize=13, fontweight="bold", color=INK, x=0.02, ha="left")
     fig.text(
         0.02, 0.945,
@@ -147,5 +145,51 @@ def plot_model_comparison(csv_path=None, out_path=None):
     return out_path
 
 
+def plot_ic_timeseries(ic_by_model, out_path=None):
+    """ic_by_model: dict of {model_name: DataFrame[date, ic]} (as returned by
+    model.summarize_ic) or {model_name: path-to-csv}. Drawn as a line vs a
+    zero baseline -- IC's natural reference point -- since the question is
+    whether it sits persistently on one side of zero, not just its magnitude.
+    A dashed line at the mean IC shows that at a glance."""
+    out_path = Path(out_path) if out_path else OUTPUT_DIR / "ic_timeseries.png"
+
+    series = {}
+    for model, data in ic_by_model.items():
+        df = data.copy() if isinstance(data, pd.DataFrame) else pd.read_csv(data)
+        df["date"] = pd.to_datetime(df["date"])
+        series[model] = df.sort_values("date")
+
+    fig, ax = plt.subplots(figsize=(10, 4.5), facecolor=SURFACE)
+
+    mean_ics = []
+    for model, df in series.items():
+        color = COLORS.get(model, INK_MUTED)
+        mean_ic = df["ic"].mean()
+        mean_ics.append(mean_ic)
+        ax.plot(df["date"], df["ic"], color=color, linewidth=1.5, marker="o",
+                markersize=5, markeredgecolor=SURFACE, markeredgewidth=0.8,
+                zorder=2)
+        ax.axhline(mean_ic, color=color, linewidth=1, alpha=0.35, zorder=1,
+                   linestyle="--")
+
+    ax.axhline(0, color=BASELINE, linewidth=1, zorder=0)
+    ax.set_title(
+        f"Out-of-sample Information Coefficient (Spearman), by quarter "
+        f"-- mean {mean_ics[0]:+.3f}",
+        color=INK, fontsize=12, fontweight="bold", loc="left")
+    ax.set_ylabel("IC", color=INK_SECONDARY, fontsize=9.5)
+    _style_axes(ax)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+    print(f"Saved IC time series chart to {out_path}")
+    return out_path
+
+
 if __name__ == "__main__":
     plot_model_comparison()
+
+    ic_path = OUTPUT_DIR / "ic_gbm.csv"
+    if ic_path.exists():
+        plot_ic_timeseries({"gbm": ic_path})
