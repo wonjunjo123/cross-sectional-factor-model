@@ -104,6 +104,8 @@ def add_forward_return_target(monthly: pd.DataFrame, horizon: int = 1) -> pd.Dat
     PERMNO with a negative shift (pulls the FUTURE value back to the
     current row). This is what the model predicts.
     """
+    # this is the true fwd_ret value we compute
+    # so that we can compute the true rankings to use as the target label
     monthly = monthly.sort_values(["permno", "date"]).copy()
     monthly["fwd_ret"] = (
         monthly.groupby("permno")["cum_ret_index"].pct_change(horizon).shift(-horizon)
