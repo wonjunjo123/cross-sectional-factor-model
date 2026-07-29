@@ -147,9 +147,9 @@ def run_walk_forward(
         # they are stripped off PERMNO, purely the factors in each row
         X_train = train[FEATURE_COLS]
         
-        # X_test also is just purely the factors
-        # y_test is purely the fwd_ret
-        X_test, y_test = test[FEATURE_COLS], test[TARGET_COL]
+        # X_test is purely the factors -- fwd_ret for the output comes
+        # straight from `test` below, not from a separate y_test.
+        X_test = test[FEATURE_COLS]
 
         # Plain L2 regression on fwd_ret optimizes predicted RETURN
         # MAGNITUDE, pooled across the whole training window -- but IC and
@@ -181,10 +181,16 @@ def run_walk_forward(
         # min_child_samples (it thresholds summed Hessian, not a raw sample
         # count) -- kept at the same numeric value as a starting point, not
         # because the two are equivalent (see README known limitations).
+        
         model = XGBRanker(
             objective="rank:ndcg", n_estimators=100, max_depth=5,
             learning_rate=0.01, min_child_weight=30, verbosity=0,
         )
+        # ndcg = Normalized Discounted Cumulative Gain.
+        # It is a metric used to measure the quality of a ranked list of items,
+        # checking how well an algorithm puts the most relevant results at the top.
+        # In XGBoost, it is used as a ranking metric and optimization objective
+        # (rank:ndcg) via the LambdaMART algorithm
         model.fit(X_train, rank_label, group=train_group)
 
         preds = model.predict(X_test)
