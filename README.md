@@ -2,7 +2,7 @@
 
 A quantitative equity research project that ranks S&P 500 stocks by
 predicted next-quarter (3-month) relative return using a gradient-boosted
-(LightGBM) model trained with a learning-to-rank objective, and
+(XGBoost) model trained with a learning-to-rank objective, and
 backtests a long-short decile portfolio built on the resulting rankings.
 
 Built to demonstrate the modeling and data-hygiene practices used in
@@ -16,10 +16,10 @@ overstates performance through survivorship or look-ahead bias.
 - **Objective:** rank S&P 500 stocks by predicted next-quarter relative
   return and evaluate the ranking's out-of-sample quality via Information
   Coefficient and a long-short backtest.
-- **Stack:** Python, pandas/NumPy, LightGBM, WRDS/CRSP.
+- **Stack:** Python, pandas/NumPy, XGBoost, WRDS/CRSP.
 - **Techniques:** point-in-time universe construction (survivorship-bias
   free), leakage-aware factor engineering, walk-forward cross-validation,
-  a learning-to-rank (`lambdarank`) training objective, rank-based
+  a learning-to-rank (`rank:ndcg`) training objective, rank-based
   (Information Coefficient) evaluation, long-short decile backtesting
   with turnover analysis.
 - **Status:** pipeline fully implemented and run end-to-end against live
@@ -29,35 +29,42 @@ overstates performance through survivorship or look-ahead bias.
 
 Produced by a full walk-forward run (60-month rolling train window, 2012–2026,
 467–492 point-in-time S&P 500 members per month), predicting **3-month
-forward relative return** (see Design decisions), evaluated on 36
-non-overlapping quarters via `output/model_comparison.csv`:
+forward relative return** (see Design decisions), evaluated on 34
+non-overlapping quarters via `output/model_comparison.csv` (2 of the 36
+walk-forward windows had too many tied predicted scores that quarter for
+`pd.qcut` to form a full 10-decile spread, so `assign_deciles` collapsed to
+9 deciles and those quarters were dropped rather than trading a partial
+book):
 
-| Metric                          | LightGBM (`lambdarank`) |
+| Metric                          | XGBoost (`rank:ndcg`) |
 |----------------------------------|:------------------------:|
-| Annualized return (gross)        | 1.5%                     |
-| Annualized volatility             | 18.5%                    |
-| Sharpe (gross)                    | 0.08                     |
-| Sharpe 95% bootstrap CI (gross)   | [-0.72, 0.66]            |
-| Sharpe p-value, gross (H0: Sharpe=0) | 0.82                  |
-| **Annualized return, net of costs** | **0.4%**               |
-| **Sharpe, net of costs**          | **0.02**                 |
-| **Sharpe 95% bootstrap CI (net)** | **[-0.80, 0.60]**        |
-| **Sharpe p-value, net (H0: Sharpe=0)** | **0.95**            |
-| Max drawdown (gross / net)        | -37.8% / -40.6%          |
-| Avg. quarterly IC (Spearman)      | -0.010                   |
-| Avg. quarterly turnover (long+short) | 1.32                  |
+| Annualized return (gross)        | 5.0%                     |
+| Annualized volatility             | 21.6%                    |
+| Sharpe (gross)                    | 0.23                     |
+| Sharpe 95% bootstrap CI (gross)   | [-0.50, 0.82]            |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.51                  |
+| **Annualized return, net of costs** | **3.9%**               |
+| **Sharpe, net of costs**          | **0.18**                 |
+| **Sharpe 95% bootstrap CI (net)** | **[-0.58, 0.77]**        |
+| **Sharpe p-value, net (H0: Sharpe=0)** | **0.61**            |
+| Max drawdown (gross / net)        | -37.1% / -38.6%          |
+| Avg. quarterly IC (Spearman)      | -0.017                   |
+| Avg. quarterly turnover (long+short) | 1.39                  |
 | Assumed round-trip cost           | 20 bps per unit of combined long+short turnover |
 
-**Honest read of these numbers:** IC is essentially zero (-0.010), and
-neither the gross nor net Sharpe clears statistical significance — at
-only 36 non-overlapping quarters, the gross Sharpe of 0.08 has a 95%
-bootstrap CI of [-0.72, 0.66] and a p-value of 0.82 against H0: Sharpe =
-0, and net of a conservative 20bps round-trip cost it's weaker still
-(Sharpe 0.02, p=0.95). **The honest conclusion: this model shows no
-edge that's distinguishable from zero, gross or net.** This project
-demonstrates a leakage-aware, cost-aware, statistically-checked research
-pipeline — it does not demonstrate a validated source of alpha, and
-shouldn't be described as one.
+**Honest read of these numbers:** despite a better-looking gross Sharpe
+(0.23) than earlier iterations of this model, IC is still essentially
+zero/slightly negative (-0.017) and neither the gross nor net Sharpe
+clears statistical significance — at only 34 non-overlapping quarters,
+the gross Sharpe's 95% bootstrap CI is [-0.50, 0.82] with a p-value of
+0.51 against H0: Sharpe = 0, and net of a conservative 20bps round-trip
+cost it's weaker still (Sharpe 0.18, p=0.61). **The honest conclusion:
+this model shows no edge that's distinguishable from zero, gross or
+net** — a higher point estimate on a noisy, small-sample metric is not
+evidence of a real edge, which is exactly why the bootstrap check exists.
+This project demonstrates a leakage-aware, cost-aware,
+statistically-checked research pipeline — it does not demonstrate a
+validated source of alpha, and shouldn't be described as one.
 
 ## Why point-in-time data matters
 
@@ -134,23 +141,26 @@ documented again in its docstring.
   the primary evaluation metric, since it evaluates rank order — what
   actually matters for a long-short portfolio built on ranks — rather
   than magnitude.
-- **The model trains on a rank objective (`lambdarank`), not L2 regression
-  on `fwd_ret`.** An earlier version used `LGBMRegressor`, minimizing
+- **The model trains on a rank objective (`rank:ndcg`), not L2 regression
+  on `fwd_ret`.** An earlier version used a plain GBM regressor, minimizing
   squared error on raw (training-winsorized) returns, pooled across the
   whole training window. That was a mismatch: IC and the decile long-short
   portfolio only ever care about a stock's rank *within its own month*,
   not the pointwise return magnitude, and a pooled L2 loss conflates
   "which months had high average returns" (time-series signal) with
   "which stocks beat their peers that month" (the only signal the
-  portfolio trades). `model.run_walk_forward` trains with
-  `LGBMRanker(objective="lambdarank")` instead, where the label is each
+  portfolio trades). `model.run_walk_forward` trains an `XGBRanker` with
+  `objective="rank:ndcg"` instead (a LambdaMART-style, NDCG-optimizing
+  objective — the same family as LightGBM's `lambdarank`, which this
+  project used before switching libraries), where the label is each
   stock's `fwd_ret` decile *within its own date* (matching the deciles
   `backtest.py` actually trades) and `group` marks each date's
   cross-section boundary so ranking pairs are never compared across
   months. The result (kept in git history for the L2 comparison): the
   theoretically better-motivated objective did *not* improve the model's
-  numbers — IC and Sharpe both got slightly worse — reported as a
-  negative result, same as the winsorization experiment below.
+  numbers under either library — IC and Sharpe got slightly worse under
+  LightGBM's version of this same experiment — reported as a negative
+  result, same as the winsorization experiment below.
 - **Winsorization is cross-sectional (per month) and asymmetric in scope.**
   `features.winsorize` clips each feature to its 1st/99th percentile
   *within that month's cross-section* before z-scoring (`features.py`), so
@@ -198,19 +208,23 @@ documented again in its docstring.
   leakage.
 - **Transaction costs are not modeled directly.** Turnover is reported
   explicitly instead, as the input needed to estimate cost impact.
-- **LightGBM hyperparameters are untuned.** `n_estimators=200, max_depth=4,
-  learning_rate=0.05, min_child_samples=30` (`model.run_walk_forward`) are
-  plausible-looking defaults, not the result of any search — there's no
-  hyperparameter tuning code anywhere in this repo. They originated on the
-  old `LGBMRegressor` baseline and were carried over unchanged onto
-  `LGBMRanker` when the training objective switched to `lambdarank` (see
-  Design decisions), specifically so that A/B comparison wasn't confounded
-  by also changing model capacity — a defensible reason for *that*
-  experiment, but not evidence the values are actually good. Tuning them
-  properly would need an inner validation split within each walk-forward
-  training window (none exists currently — `run_walk_forward` only ever
-  does train → predict on the immediate next test period), which is a
-  natural next step, not yet done.
+- **XGBoost hyperparameters are untuned.** `n_estimators=100, max_depth=5,
+  learning_rate=0.01, min_child_weight=30` (`model.run_walk_forward`) are
+  plausible-looking values, not the result of any search — there's no
+  hyperparameter tuning code anywhere in this repo. Tuning them properly
+  would need an inner validation split within each walk-forward training
+  window (none exists currently — `run_walk_forward` only ever does
+  train → predict on the immediate next test period), which is a natural
+  next step, not yet done. Separately, **`min_child_weight` is not a
+  faithful translation of the LightGBM `min_child_samples` value this
+  project used before switching GBM libraries** — `min_child_samples`
+  thresholds a leaf's raw sample count, while XGBoost's `min_child_weight`
+  thresholds the leaf's *summed Hessian*, a different quantity that only
+  equals the sample count in special cases (e.g. plain squared-error
+  regression). The same numeric value (30) was carried over as a starting
+  point when swapping libraries, not because the two parameters are
+  equivalent under `rank:ndcg` — worth revisiting alongside the tuning
+  work above, not in isolation.
 
 ## Pipeline
 
@@ -220,8 +234,8 @@ documented again in its docstring.
    liquidity factors from full price history, applies the point-in-time
    membership filter, cross-sectionally z-scores, builds the forward-
    return target
-3. `model.py` — walk-forward (rolling-window) cross-validation; trains a
-   LightGBM ranking model (`lambdarank` objective) on each window; scores
+3. `model.py` — walk-forward (rolling-window) cross-validation; trains an
+   XGBoost ranking model (`rank:ndcg` objective) on each window; scores
    predictions using the Information Coefficient (Spearman rank
    correlation)
 4. `backtest.py` — builds a long top-decile / short bottom-decile
@@ -232,7 +246,7 @@ documented again in its docstring.
 ## Running this project
 
 ```bash
-pip install pandas numpy scipy lightgbm wrds pyarrow matplotlib
+pip install pandas numpy scipy xgboost wrds pyarrow matplotlib tqdm
 
 python src/data_prep.py <wrds_username>   # one-time WRDS pull
 python src/main.py                        # features -> model -> backtest -> performance summary
@@ -264,20 +278,27 @@ one.
   to avoid look-ahead leakage
 - ~~Statistical significance check on the Sharpe/IC~~ **Done** — see
   `backtest.bootstrap_sharpe_test` and Design decisions. Result: the
-  model's Sharpe is not statistically distinguishable from zero at n=36
+  model's Sharpe is not statistically distinguishable from zero at n=34
   quarters (see Results). This is now a checked, reported finding, not an
   open item.
 - ~~Back-of-envelope transaction cost estimate~~ **Done** — see
   `backtest.apply_transaction_costs` and Design decisions. Result: at a
-  20bps round-trip assumption, the model's gross Sharpe of 0.08 (already
-  not significant) drops to a net 0.02 (p=0.95, even less significant);
-  at 10bps, net Sharpe is 0.05 (p=0.89) — still not significant either
+  20bps round-trip assumption, the model's gross Sharpe of 0.23 (already
+  not significant) drops to a net 0.18 (p=0.61, still not significant);
+  at 10bps, net Sharpe is 0.21 (p=0.55) — still not significant either
   way (see Results).
 - ~~Fix the training objective/eval mismatch~~ **Done** — see Design
   decisions ("The model trains on a rank objective"). Result: switching
-  from L2 regression to a `lambdarank` objective grouped by date made IC
-  and Sharpe slightly *worse*, not better (see Results) — reported as a
-  negative result, not reverted.
+  from L2 regression to a rank objective grouped by date made IC and
+  Sharpe slightly *worse* under LightGBM, the library where this was
+  first tested (see Results) — reported as a negative result, not
+  reverted.
+- ~~Switch GBM library from LightGBM to XGBoost~~ **Done** — see
+  `model.run_walk_forward` (`XGBRanker`, `objective="rank:ndcg"`, the
+  closest XGBoost analog to LightGBM's `lambdarank`). Note: XGBoost's
+  `min_child_weight` is not a faithful translation of LightGBM's
+  `min_child_samples` (see Known limitations) — carried over as a
+  starting value, not re-tuned.
 - **Keep the pitch scoped to what this actually demonstrates.** Momentum,
   size, vol, and liquidity are a standard, Fama-French-adjacent factor
   set — appropriate for demonstrating a leakage-aware, point-in-time

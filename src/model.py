@@ -9,7 +9,7 @@ backtest and a leaked one.
 
 import pandas as pd
 import numpy as np
-from lightgbm import LGBMRanker
+from xgboost import XGBRanker
 from scipy.stats import spearmanr
 from tqdm import tqdm
 
@@ -88,7 +88,7 @@ def run_walk_forward(
     horizon: int = 1,
 ) -> pd.DataFrame:
     """
-    Runs the full walk-forward loop, training a fresh LightGBM ranker on
+    Runs the full walk-forward loop, training a fresh XGBoost ranker on
     each window and generating predictions for the following out-of-sample
     period.
 
@@ -154,30 +154,36 @@ def run_walk_forward(
         # Plain L2 regression on fwd_ret optimizes predicted RETURN
         # MAGNITUDE, pooled across the whole training window -- but IC and
         # the decile long-short portfolio only care about rank ORDER within
-        # each month. lambdarank optimizes that directly: the training label
-        # is each stock's fwd_ret DECILE within its own date (matching the
-        # deciles backtest.py actually trades), and `group` tells LightGBM
-        # where one date's cross-section ends and the next begins so ranking
-        # pairs are never compared across dates.
-        
+        # each month. A rank objective optimizes that directly: the training
+        # label is each stock's fwd_ret DECILE within its own date (matching
+        # the deciles backtest.py actually trades), and `group` tells
+        # XGBoost where one date's cross-section ends and the next begins so
+        # ranking pairs are never compared across dates.
+
         # train_group is an array containing the number of stocks per each training month
-        # we do this to tell LightGBM where one month's cross-section ends
+        # we do this to tell XGBoost where one month's cross-section ends
         # and the next begins, so a stock is only ever compared against
         # its own month's peers — never ranked against a different month.
         train_group = train.groupby("date").size().to_numpy()
-        
+
         # turns each stock's continuous fwd_ret into a decile label (0-9 within its own month)
-        # LGBMRanker is learning to predict the rank based on the factors, not the return
+        # XGBRanker is learning to predict the rank based on the factors, not the return
         # Basically, the model will say, based on these factors, this stock will be nth rank this month
         rank_label = train.groupby("date")[TARGET_COL].transform(
             lambda s: pd.qcut(s, 10, labels=False, duplicates="drop")
             # qcut is a quantile-based binning, and we are using 10 for deciles
             # labels=False makes it return ints 0~9 instead of interval objects like (0.01,0.05]
         ) # ultimately these are the targets
-        
-        model = LGBMRanker(
-            objective="lambdarank", n_estimators=100, max_depth=5,
-            learning_rate=0.01, min_child_samples=30, verbosity=-1,
+
+        # objective="rank:ndcg" is XGBoost's closest analog to LightGBM's
+        # lambdarank -- both are LambdaMART-style, NDCG-optimizing rank
+        # objectives. min_child_weight is NOT the same thing as LightGBM's
+        # min_child_samples (it thresholds summed Hessian, not a raw sample
+        # count) -- kept at the same numeric value as a starting point, not
+        # because the two are equivalent (see README known limitations).
+        model = XGBRanker(
+            objective="rank:ndcg", n_estimators=100, max_depth=5,
+            learning_rate=0.01, min_child_weight=30, verbosity=0,
         )
         model.fit(X_train, rank_label, group=train_group)
 
@@ -186,6 +192,9 @@ def run_walk_forward(
         out = test[["date", "permno", TARGET_COL]].copy()
         out["pred"] = preds
         results.append(out)
+        
+    # results is a list that contains M entries where M is the number of train/test windows
+    # and each entry is a month of predictions (HORIZON=3) months out past the training date
 
     return pd.concat(results, ignore_index=True)
 
