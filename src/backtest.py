@@ -108,6 +108,11 @@ def apply_transaction_costs(
     port["turnover_combined"] = combined_turnover
     port["cost_drag"] = combined_turnover * (cost_bps / 10000)
     port["ls_ret_net"] = port["ls_ret"] - port["cost_drag"]
+
+    # Long-only variant (see compare_portfolio_constructions): no short leg
+    # to trade, so only the long leg's own turnover is chargeable.
+    port["long_ret_net"] = port["long_ret"] - long_turnover * (cost_bps / 10000)
+
     return port.reset_index()
 
 
@@ -191,6 +196,39 @@ def performance_summary(port: pd.DataFrame, freq: int = 12, ret_col: str = "ls_r
     }
 
 
+_COMPARISON_COLS = [
+    "ann_return", "ann_vol", "sharpe", "sharpe_ci_low", "sharpe_ci_high",
+    "sharpe_p_value", "max_drawdown", "ann_return_net", "sharpe_net",
+    "sharpe_net_ci_low", "sharpe_net_ci_high", "sharpe_net_p_value",
+    "max_drawdown_net", "turnover_mean", "cost_bps", "n_periods",
+]
+
+
+def _return_stats(port: pd.DataFrame, ret_col: str, freq: int) -> dict:
+    """Annualized performance + bootstrap significance for one return
+    column. Shared by compare_models (gross/net long-short) and
+    compare_portfolio_constructions (long-short vs. long-only)."""
+    perf = performance_summary(port, freq=freq, ret_col=ret_col)
+    perf.update(bootstrap_sharpe_test(port[ret_col], freq=freq))
+    return perf
+
+
+def _gross_net_row(port: pd.DataFrame, gross_col: str, net_col: str, freq: int) -> dict:
+    """One comparison-table row: gross stats plus the net_col variants
+    merged in under the `_net` suffix -- the shape both compare_models
+    and compare_portfolio_constructions build their rows from."""
+    perf = _return_stats(port, gross_col, freq)
+
+    net = _return_stats(port, net_col, freq)
+    perf["ann_return_net"] = net["ann_return"]
+    perf["sharpe_net"] = net["sharpe"]
+    perf["max_drawdown_net"] = net["max_drawdown"]
+    perf["sharpe_net_ci_low"] = net["sharpe_ci_low"]
+    perf["sharpe_net_ci_high"] = net["sharpe_ci_high"]
+    perf["sharpe_net_p_value"] = net["sharpe_p_value"]
+    return perf
+
+
 def compare_models(
     predictions_by_model: dict[str, pd.DataFrame], freq: int = 12, cost_bps: float = 20.0
 ) -> pd.DataFrame:
@@ -219,26 +257,52 @@ def compare_models(
         port = compute_portfolio_returns(preds)
         port = apply_transaction_costs(port, preds, cost_bps=cost_bps)
 
-        perf = performance_summary(port, freq=freq, ret_col="ls_ret")
-        perf.update(bootstrap_sharpe_test(port["ls_ret"], freq=freq))
-
-        net = performance_summary(port, freq=freq, ret_col="ls_ret_net")
-        perf["ann_return_net"] = net["ann_return"]
-        perf["sharpe_net"] = net["sharpe"]
-        perf["max_drawdown_net"] = net["max_drawdown"]
-        net_sig = bootstrap_sharpe_test(port["ls_ret_net"], freq=freq)
-        perf["sharpe_net_ci_low"] = net_sig["sharpe_ci_low"]
-        perf["sharpe_net_ci_high"] = net_sig["sharpe_ci_high"]
-        perf["sharpe_net_p_value"] = net_sig["sharpe_p_value"]
-
+        perf = _gross_net_row(port, "ls_ret", "ls_ret_net", freq)
         perf["turnover_mean"] = compute_turnover(preds).mean()
         perf["cost_bps"] = cost_bps
         perf["model"] = name
         rows.append(perf)
 
-    return pd.DataFrame(rows).set_index("model")[
-        ["ann_return", "ann_vol", "sharpe", "sharpe_ci_low", "sharpe_ci_high",
-         "sharpe_p_value", "max_drawdown", "ann_return_net", "sharpe_net",
-         "sharpe_net_ci_low", "sharpe_net_ci_high", "sharpe_net_p_value",
-         "max_drawdown_net", "turnover_mean", "cost_bps", "n_periods"]
-    ]
+    return pd.DataFrame(rows).set_index("model")[_COMPARISON_COLS]
+
+
+def compare_portfolio_constructions(
+    predictions: pd.DataFrame, freq: int = 12, cost_bps: float = 20.0
+) -> pd.DataFrame:
+    """
+    Compares the full long-short book (long top decile, short bottom
+    decile) against a long-only variant (top decile only, no short leg)
+    built from the SAME model predictions -- answers "how much of this
+    edge, or this cost drag, is actually coming from the short leg?"
+    rather than comparing across different models.
+
+    `turnover_mean` means the turnover base each row's costs are actually
+    charged against: combined long+short turnover for the `long_short`
+    row, long-leg-only turnover for `long_only` (there's no short leg to
+    turn over there). No short-selling costs beyond that turnover-based
+    charge -- no borrow fee/margin modeling -- are added for either row;
+    see apply_transaction_costs and the README's known limitations.
+
+    Returns a table shaped like `compare_models`'s output, but indexed by
+    `construction` ("long_short" / "long_only") instead of `model`.
+    """
+    port = compute_portfolio_returns(predictions)
+    port = apply_transaction_costs(port, predictions, cost_bps=cost_bps)
+
+    long_turnover = compute_turnover(predictions, decile=9)
+    short_turnover = compute_turnover(predictions, decile=0)
+
+    constructions = {
+        "long_short": ("ls_ret", "ls_ret_net", (long_turnover + short_turnover).mean()),
+        "long_only": ("long_ret", "long_ret_net", long_turnover.mean()),
+    }
+
+    rows = []
+    for label, (gross_col, net_col, turnover_mean) in constructions.items():
+        perf = _gross_net_row(port, gross_col, net_col, freq)
+        perf["turnover_mean"] = turnover_mean
+        perf["cost_bps"] = cost_bps
+        perf["construction"] = label
+        rows.append(perf)
+
+    return pd.DataFrame(rows).set_index("construction")[_COMPARISON_COLS]

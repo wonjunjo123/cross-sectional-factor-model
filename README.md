@@ -66,6 +66,40 @@ This project demonstrates a leakage-aware, cost-aware,
 statistically-checked research pipeline — it does not demonstrate a
 validated source of alpha, and shouldn't be described as one.
 
+### Long-short vs. long-only
+
+`backtest.compare_portfolio_constructions` isolates how much of the above
+is actually coming from the short leg, by building a long-only book (top
+decile only, no short leg) from the exact same predictions
+(`output/portfolio_construction_comparison.csv`):
+
+| Metric                  | Long-short | Long-only |
+|--------------------------|:----------:|:---------:|
+| Annualized return (gross)| 5.0%       | **17.5%** |
+| Annualized volatility    | 21.6%      | 26.6%     |
+| Sharpe (gross)           | 0.23       | **0.66**  |
+| Sharpe 95% bootstrap CI (gross) | [-0.50, 0.82] | **[0.01, 1.39]** |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.51 | **0.066** |
+| Sharpe, net of costs     | 0.18       | **0.64**  |
+| Sharpe p-value, net (H0: Sharpe=0) | 0.61 | **0.075** |
+| Max drawdown (gross)     | -37.1%     | **-27.4%**|
+
+**Honest read:** the short leg looks like a net drag here, not a hedge
+earning its keep. Dropping it more than triples annualized return and
+roughly triples Sharpe, and — despite higher volatility — produces a
+*shallower* max drawdown too. Long-only's gross Sharpe CI lower bound
+(0.01) just clears zero, putting it at the edge of conventional 5%
+significance (p=0.066 gross, p=0.075 net) — a materially different
+picture than the long-short book's p≈0.5–0.6, though still not a clean
+rejection of "no edge." **One important caveat:** this comparison was
+run *after* already seeing that the long-short result was weak, not as
+a pre-registered test — that's a multiple-comparisons/post-hoc-search
+risk, which inflates the chance this is a false positive. "Worth
+investigating further" is the honest characterization, not "found
+alpha" (see Possible extensions for the proper next check: testing
+whether the long-only and long-short Sharpes actually differ from each
+other, not just each from zero independently).
+
 ## Why point-in-time data matters
 
 Universe and prices come from **WRDS/CRSP**, not a simplified source
@@ -299,6 +333,23 @@ one.
   `min_child_weight` is not a faithful translation of LightGBM's
   `min_child_samples` (see Known limitations) — carried over as a
   starting value, not re-tuned.
+- ~~Compare long-short vs. long-only~~ **Done** — see
+  `backtest.compare_portfolio_constructions` and Results ("Long-short
+  vs. long-only"). Result: the short leg looks like a net drag on this
+  backtest — long-only's Sharpe (0.66 gross, 0.64 net) is meaningfully
+  higher than long-short's (0.23 gross, 0.18 net) and sits right at the
+  edge of conventional significance (p≈0.07). Flagged as a post-hoc
+  finding worth the proper follow-up test below, not yet a confirmed
+  result.
+- **Test whether long-only and long-short Sharpes actually differ from
+  each other**, not just each from zero independently. The current
+  bootstrap (`backtest.bootstrap_sharpe_test`) tests one return series
+  against H0: Sharpe=0; it says nothing about whether two series' Sharpes
+  are statistically distinguishable *from each other*, and the two
+  construction variants share the same underlying long-leg returns
+  (not independent samples), so a paired/differenced bootstrap is the
+  correct next step before treating the long-short-vs-long-only gap
+  above as more than exploratory. Not yet implemented.
 - **Keep the pitch scoped to what this actually demonstrates.** Momentum,
   size, vol, and liquidity are a standard, Fama-French-adjacent factor
   set — appropriate for demonstrating a leakage-aware, point-in-time

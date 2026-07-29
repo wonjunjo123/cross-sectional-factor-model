@@ -14,7 +14,7 @@ from pathlib import Path
 
 from features import build_feature_panel
 from model import run_walk_forward, summarize_ic
-from backtest import compare_models
+from backtest import compare_models, compare_portfolio_constructions
 from visualize import plot_model_comparison, plot_ic_timeseries
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -62,6 +62,11 @@ def main():
     summary.to_csv(OUTPUT_DIR / "model_comparison.csv")
     plot_model_comparison(OUTPUT_DIR / "model_comparison.csv", OUTPUT_DIR / "model_comparison.png")
     plot_ic_timeseries({"gbm": ic}, OUTPUT_DIR / "ic_timeseries.png")
+
+    print("\n--- Long-short vs. long-only ---")
+    construction_summary = compare_portfolio_constructions(preds, freq=12 // HORIZON)
+    print(construction_summary)
+    construction_summary.to_csv(OUTPUT_DIR / "portfolio_construction_comparison.csv")
 
 if __name__ == "__main__":
     main()
