@@ -34,30 +34,32 @@ non-overlapping quarters via `output/model_comparison.csv`:
 
 | Metric                          | XGBoost (`rank:ndcg`) |
 |----------------------------------|:------------------------:|
-| Annualized return (gross)        | 3.8%                     |
-| Annualized volatility             | 21.5%                    |
-| Sharpe (gross)                    | 0.18                     |
-| Sharpe 95% bootstrap CI (gross)   | [-0.56, 0.76]            |
-| Sharpe p-value, gross (H0: Sharpe=0) | 0.60                  |
-| **Annualized return, net of costs** | **2.7%**               |
-| **Sharpe, net of costs**          | **0.13**                 |
-| **Sharpe 95% bootstrap CI (net)** | **[-0.63, 0.71]**        |
-| **Sharpe p-value, net (H0: Sharpe=0)** | **0.71**            |
-| Max drawdown (gross / net)        | -37.6% / -39.1%          |
-| Avg. quarterly IC (Spearman)      | -0.017                   |
-| Avg. quarterly turnover (long+short) | 1.41                  |
+| Annualized return (gross)        | 4.8%                     |
+| Annualized volatility             | 19.9%                    |
+| Sharpe (gross)                    | 0.24                     |
+| Sharpe 95% bootstrap CI (gross)   | [-0.50, 0.81]            |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.48                  |
+| **Annualized return, net of costs** | **3.8%**               |
+| **Sharpe, net of costs**          | **0.19**                 |
+| **Sharpe 95% bootstrap CI (net)** | **[-0.57, 0.76]**        |
+| **Sharpe p-value, net (H0: Sharpe=0)** | **0.58**            |
+| Max drawdown (gross / net)        | -30.3% / -32.7%          |
+| Avg. quarterly IC (Spearman)      | -0.008                   |
+| Avg. quarterly turnover (long+short) | 1.25                  |
 | Assumed round-trip cost           | 20 bps per unit of combined long+short turnover |
 
-**Honest read of these numbers:** IC is essentially zero/slightly
-negative (-0.017) and neither the gross nor net Sharpe clears statistical
-significance — at 36 non-overlapping quarters, the gross Sharpe's 95%
-bootstrap CI is [-0.56, 0.76] with a p-value of 0.60 against H0: Sharpe =
-0, and net of a conservative 20bps round-trip cost it's weaker still
-(Sharpe 0.13, p=0.71). **The honest conclusion: this model shows no
-edge that's distinguishable from zero, gross or net.** This project
-demonstrates a leakage-aware, cost-aware, statistically-checked research
-pipeline — it does not demonstrate a validated source of alpha, and
-shouldn't be described as one.
+**Honest read of these numbers:** IC is essentially zero (-0.008) and
+neither the gross nor net Sharpe clears statistical significance — at 36
+non-overlapping quarters, the gross Sharpe's 95% bootstrap CI is [-0.50,
+0.81] with a p-value of 0.48 against H0: Sharpe = 0, and net of a
+conservative 20bps round-trip cost it's weaker still (Sharpe 0.19,
+p=0.58). **The honest conclusion: this model shows no edge that's
+distinguishable from zero, gross or net.** This project demonstrates a
+leakage-aware, cost-aware, statistically-checked research pipeline — it
+does not demonstrate a validated source of alpha, and shouldn't be
+described as one. (These numbers reflect `colsample_bytree=0.7`, a Tier 1
+hyperparameter-tuning result — see Design decisions — which moved IC and
+Sharpe modestly but didn't change this conclusion.)
 
 **A bug in decile assignment was found and fixed here, not just a data
 quirk.** An earlier version of `assign_deciles` (`backtest.py`) ran
@@ -87,30 +89,34 @@ decile only, no short leg) from the exact same predictions
 
 | Metric                  | Long-short | Long-only |
 |--------------------------|:----------:|:---------:|
-| Annualized return (gross)| 3.8%       | **16.7%** |
-| Annualized volatility    | 21.5%      | 26.1%     |
-| Sharpe (gross)           | 0.18       | **0.64**  |
-| Sharpe 95% bootstrap CI (gross) | [-0.56, 0.76] | **[0.02, 1.34]** |
-| Sharpe p-value, gross (H0: Sharpe=0) | 0.60 | **0.063** |
-| Sharpe, net of costs     | 0.13       | **0.62**  |
-| Sharpe p-value, net (H0: Sharpe=0) | 0.71 | **0.071** |
-| Max drawdown (gross)     | -37.6%     | **-27.4%**|
+| Annualized return (gross)| 4.8%       | **17.1%** |
+| Annualized volatility    | 19.9%      | 25.2%     |
+| Sharpe (gross)           | 0.24       | **0.68**  |
+| Sharpe 95% bootstrap CI (gross) | [-0.50, 0.81] | **[0.06, 1.34]** |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.48 | **0.049** |
+| Sharpe, net of costs     | 0.19       | **0.66**  |
+| Sharpe p-value, net (H0: Sharpe=0) | 0.58 | **0.056** |
+| Max drawdown (gross)     | -30.3%     | **-22.2%**|
 
-**Honest read:** the short leg looks like a net drag here, not a hedge
-earning its keep. Dropping it more than quadruples annualized return and
-roughly triples Sharpe, and — despite higher volatility — produces a
-*shallower* max drawdown too. Long-only's gross Sharpe CI lower bound
-(0.02) just clears zero, putting it at the edge of conventional 5%
-significance (p=0.063 gross, p=0.071 net) — a materially different
-picture than the long-short book's p≈0.6–0.7, though still not a clean
-rejection of "no edge." **One important caveat:** this comparison was
-run *after* already seeing that the long-short result was weak, not as
-a pre-registered test — that's a multiple-comparisons/post-hoc-search
-risk, which inflates the chance this is a false positive. "Worth
-investigating further" is the honest characterization, not "found
-alpha" (see Possible extensions for the proper next check: testing
-whether the long-only and long-short Sharpes actually differ from each
-other, not just each from zero independently).
+**Honest read:** the short leg still looks like a net drag, not a hedge
+earning its keep — long-only's Sharpe is roughly triple long-short's on
+both a gross and net basis, with a shallower max drawdown despite higher
+volatility. The gross p-value (0.049) now technically crosses the
+conventional 0.05 threshold, but I'm deliberately not calling this
+"significant": the net p-value (0.056) doesn't, and a result that flips
+sides of a threshold depending on whether costs are included, on n=36
+quarters, is exactly the kind of borderline result that threshold
+language oversells. **Two important caveats compound here, not one:**
+this comparison was run *after* already seeing the long-short result was
+weak (a post-hoc/multiple-comparisons risk), AND `colsample_bytree=0.7`
+(what moved these numbers from the earlier p≈0.06-0.07 read to
+p≈0.05-0.06) was itself chosen from a Tier 1 sweep that did not clear
+significance on its own (see Design decisions). Stacking a borderline
+hyperparameter choice on top of a post-hoc portfolio-construction
+comparison is not how you accumulate confidence — "worth investigating
+further" is still the honest characterization, not "found alpha" (see
+Possible extensions for the proper next check: a paired test of whether
+long-only and long-short Sharpes actually differ from each other).
 
 ## Why point-in-time data matters
 
@@ -207,6 +213,32 @@ documented again in its docstring.
   numbers under either library — IC and Sharpe got slightly worse under
   LightGBM's version of this same experiment — reported as a negative
   result, same as the winsorization experiment below.
+- **`colsample_bytree=0.7`, chosen via a paired Tier 1 hyperparameter
+  sweep, not a guessed default.** `hyperparameter_approach.md`'s tuning
+  roadmap prioritizes capacity-control parameters first, reasoning that
+  with ~477 stocks per month the overfitting risk is a tree memorizing
+  noise across a modest number (~35) of independent walk-forward folds,
+  not thin cross-sections. `tune.py`'s harness sweeps one parameter at a
+  time (not a combinatorial grid) against `model.run_walk_forward`'s
+  `return_diagnostics=True` path, which reports in-sample IC, OOS IC,
+  and the gap between them per fold (`output/tuning_results.csv`).
+  Three findings came out of the full Tier 1 sweep: (1) `max_depth`,
+  `min_child_weight`, and `subsample` showed no distinguishable effect
+  at any tested value — every result within ~0.3 standard errors of
+  every other. (2) `colsample_bytree` ∈ {0.6, 0.7, 0.8} consistently
+  clustered away from the default (1.0) on both OOS IC and the
+  train/test gap — but because every config in the sweep shares
+  identical walk-forward folds, the right comparison is a **paired**
+  per-fold test (higher power than comparing independent means), which
+  put this at t≈1.4 and ~58% of folds better -- not statistically
+  significant. Set as the new default anyway, as a low-risk,
+  plausibly-neutral-to-positive choice — not a confirmed win, and the
+  Results section's numbers are flagged accordingly everywhere this
+  choice touches them. (3) In-sample IC never exceeded +0.014 across
+  all 17 configs tested — arguably the more important finding: Tier 1
+  (capacity control) has little to work with when the model isn't
+  finding much signal even on its own training data, which points at
+  the feature set as the likely bottleneck, not tree capacity.
 - **Winsorization is cross-sectional (per month) and asymmetric in scope.**
   `features.winsorize` clips each feature to its 1st/99th percentile
   *within that month's cross-section* before z-scoring (`features.py`), so
@@ -254,23 +286,26 @@ documented again in its docstring.
   leakage.
 - **Transaction costs are not modeled directly.** Turnover is reported
   explicitly instead, as the input needed to estimate cost impact.
-- **XGBoost hyperparameters are untuned.** `n_estimators=100, max_depth=5,
+- **Most XGBoost hyperparameters remain untuned; one (`colsample_bytree`)
+  now is, provisionally.** `n_estimators=100, max_depth=5,
   learning_rate=0.01, min_child_weight=30` (`model.run_walk_forward`) are
-  plausible-looking values, not the result of any search — there's no
-  hyperparameter tuning code anywhere in this repo. Tuning them properly
-  would need an inner validation split within each walk-forward training
-  window (none exists currently — `run_walk_forward` only ever does
-  train → predict on the immediate next test period), which is a natural
-  next step, not yet done. Separately, **`min_child_weight` is not a
-  faithful translation of the LightGBM `min_child_samples` value this
-  project used before switching GBM libraries** — `min_child_samples`
-  thresholds a leaf's raw sample count, while XGBoost's `min_child_weight`
-  thresholds the leaf's *summed Hessian*, a different quantity that only
-  equals the sample count in special cases (e.g. plain squared-error
-  regression). The same numeric value (30) was carried over as a starting
-  point when swapping libraries, not because the two parameters are
-  equivalent under `rank:ndcg` — worth revisiting alongside the tuning
-  work above, not in isolation.
+  still plausible-looking values rather than the result of a search that
+  cleared any bar — `tune.py`'s Tier 1 sweep tested `max_depth`,
+  `min_child_weight`, and `subsample` too, and none showed a
+  distinguishable effect at any value tried (see Design decisions and
+  `output/tuning_results.csv`). Tier 2/3 of `hyperparameter_approach.md`
+  (learning-rate/tree-count tradeoffs with early stopping against a
+  walk-forward validation fold; ranking-specific mechanics like
+  `lambdarank_pair_method`) haven't been run yet. Separately,
+  **`min_child_weight` is not a faithful translation of the LightGBM
+  `min_child_samples` value this project used before switching GBM
+  libraries** — `min_child_samples` thresholds a leaf's raw sample
+  count, while XGBoost's `min_child_weight` thresholds the leaf's
+  *summed Hessian*, a different quantity that only equals the sample
+  count in special cases (e.g. plain squared-error regression). The
+  same numeric value (30) was carried over as a starting point when
+  swapping libraries, not because the two parameters are equivalent
+  under `rank:ndcg`.
 
 ## Pipeline
 
@@ -329,9 +364,9 @@ one.
   open item.
 - ~~Back-of-envelope transaction cost estimate~~ **Done** — see
   `backtest.apply_transaction_costs` and Design decisions. Result: at a
-  20bps round-trip assumption, the model's gross Sharpe of 0.18 (already
-  not significant) drops to a net 0.13 (p=0.71, still not significant);
-  at 10bps, net Sharpe is 0.15 (p=0.66) — still not significant either
+  20bps round-trip assumption, the model's gross Sharpe of 0.24 (already
+  not significant) drops to a net 0.19 (p=0.58, still not significant);
+  at 10bps, net Sharpe is 0.22 (p=0.53) — still not significant either
   way (see Results).
 - ~~Fix the training objective/eval mismatch~~ **Done** — see Design
   decisions ("The model trains on a rank objective"). Result: switching
@@ -348,11 +383,21 @@ one.
 - ~~Compare long-short vs. long-only~~ **Done** — see
   `backtest.compare_portfolio_constructions` and Results ("Long-short
   vs. long-only"). Result: the short leg looks like a net drag on this
-  backtest — long-only's Sharpe (0.64 gross, 0.62 net) is meaningfully
-  higher than long-short's (0.18 gross, 0.13 net) and sits right at the
-  edge of conventional significance (p≈0.07). Flagged as a post-hoc
-  finding worth the proper follow-up test below, not yet a confirmed
-  result.
+  backtest — long-only's Sharpe (0.68 gross, 0.66 net) is roughly triple
+  long-short's (0.24 gross, 0.19 net) and sits right at the edge of
+  conventional significance (p≈0.05-0.06, flips sides of 0.05 depending
+  on gross vs. net). Flagged as a post-hoc finding worth the proper
+  follow-up test below, not yet a confirmed result.
+- ~~Tier 1 hyperparameter sweep (capacity control)~~ **Done** — see
+  `tune.py`, `hyperparameter_approach.md`, and Design decisions
+  ("`colsample_bytree=0.7`..."). Result: `max_depth`, `min_child_weight`,
+  and `subsample` showed no distinguishable effect at any value tested;
+  `colsample_bytree` showed a consistent but not statistically
+  significant lean (paired t≈1.4) and was adopted provisionally. More
+  notably, in-sample IC never exceeded +0.014 across all 17 configs —
+  evidence the bottleneck is the feature set, not tree capacity. Tier
+  2/3 (learning-rate/tree-count with early stopping; ranking-specific
+  mechanics) are not yet run.
 - ~~Fix `assign_deciles`'s tie-driven decile-label bug~~ **Done** — see
   `backtest.assign_deciles` and Results. `pd.qcut(..., duplicates="drop")`
   on tied `pred` values was silently shifting the top-decile label away
