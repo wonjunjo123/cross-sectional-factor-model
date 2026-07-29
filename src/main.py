@@ -14,8 +14,11 @@ from pathlib import Path
 
 from features import build_feature_panel
 from model import run_walk_forward, summarize_ic
-from backtest import compare_models, compare_portfolio_constructions
-from visualize import plot_model_comparison, plot_ic_timeseries
+from backtest import (
+    compare_models, compare_portfolio_constructions,
+    compute_portfolio_returns, apply_transaction_costs,
+)
+from visualize import plot_model_comparison, plot_ic_timeseries, plot_equity_curve
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
@@ -57,16 +60,29 @@ def main():
     preds.to_parquet(OUTPUT_DIR / "predictions_gbm.parquet", index=False)
 
     print("\n--- Performance summary ---")
-    summary = compare_models({"gbm": preds}, freq=12 // HORIZON)
+    # 12 / HORIZON (true division, not //): freq is just an annualization
+    # scalar (ann_return = ret.mean() * freq), so it doesn't need to be a
+    # whole number -- and // would silently floor to the wrong factor for
+    # any HORIZON that doesn't evenly divide 12 (e.g. HORIZON=5 -> 12//5=2
+    # instead of the correct 2.4).
+    summary = compare_models({"gbm": preds}, freq=12 / HORIZON)
     print(summary)
     summary.to_csv(OUTPUT_DIR / "model_comparison.csv")
     plot_model_comparison(OUTPUT_DIR / "model_comparison.csv", OUTPUT_DIR / "model_comparison.png")
     plot_ic_timeseries({"gbm": ic}, OUTPUT_DIR / "ic_timeseries.png")
 
     print("\n--- Long-short vs. long-only ---")
-    construction_summary = compare_portfolio_constructions(preds, freq=12 // HORIZON)
+    construction_summary = compare_portfolio_constructions(preds, freq=12 / HORIZON)
     print(construction_summary)
     construction_summary.to_csv(OUTPUT_DIR / "portfolio_construction_comparison.csv")
+
+    # compare_models/compare_portfolio_constructions only keep the
+    # annualized summary -- save the underlying per-quarter return series
+    # too, since that's what an equity curve actually needs to plot.
+    portfolio_returns = compute_portfolio_returns(preds)
+    portfolio_returns = apply_transaction_costs(portfolio_returns, preds)
+    portfolio_returns.to_csv(OUTPUT_DIR / "portfolio_returns.csv", index=False)
+    plot_equity_curve(OUTPUT_DIR / "portfolio_returns.csv", OUTPUT_DIR / "equity_curve.png")
 
 if __name__ == "__main__":
     main()

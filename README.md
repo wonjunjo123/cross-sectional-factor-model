@@ -29,42 +29,54 @@ overstates performance through survivorship or look-ahead bias.
 
 Produced by a full walk-forward run (60-month rolling train window, 2012–2026,
 467–492 point-in-time S&P 500 members per month), predicting **3-month
-forward relative return** (see Design decisions), evaluated on 34
-non-overlapping quarters via `output/model_comparison.csv` (2 of the 36
-walk-forward windows had too many tied predicted scores that quarter for
-`pd.qcut` to form a full 10-decile spread, so `assign_deciles` collapsed to
-9 deciles and those quarters were dropped rather than trading a partial
-book):
+forward relative return** (see Design decisions), evaluated on 36
+non-overlapping quarters via `output/model_comparison.csv`:
 
 | Metric                          | XGBoost (`rank:ndcg`) |
 |----------------------------------|:------------------------:|
-| Annualized return (gross)        | 5.0%                     |
-| Annualized volatility             | 21.6%                    |
-| Sharpe (gross)                    | 0.23                     |
-| Sharpe 95% bootstrap CI (gross)   | [-0.50, 0.82]            |
-| Sharpe p-value, gross (H0: Sharpe=0) | 0.51                  |
-| **Annualized return, net of costs** | **3.9%**               |
-| **Sharpe, net of costs**          | **0.18**                 |
-| **Sharpe 95% bootstrap CI (net)** | **[-0.58, 0.77]**        |
-| **Sharpe p-value, net (H0: Sharpe=0)** | **0.61**            |
-| Max drawdown (gross / net)        | -37.1% / -38.6%          |
+| Annualized return (gross)        | 3.8%                     |
+| Annualized volatility             | 21.5%                    |
+| Sharpe (gross)                    | 0.18                     |
+| Sharpe 95% bootstrap CI (gross)   | [-0.56, 0.76]            |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.60                  |
+| **Annualized return, net of costs** | **2.7%**               |
+| **Sharpe, net of costs**          | **0.13**                 |
+| **Sharpe 95% bootstrap CI (net)** | **[-0.63, 0.71]**        |
+| **Sharpe p-value, net (H0: Sharpe=0)** | **0.71**            |
+| Max drawdown (gross / net)        | -37.6% / -39.1%          |
 | Avg. quarterly IC (Spearman)      | -0.017                   |
-| Avg. quarterly turnover (long+short) | 1.39                  |
+| Avg. quarterly turnover (long+short) | 1.41                  |
 | Assumed round-trip cost           | 20 bps per unit of combined long+short turnover |
 
-**Honest read of these numbers:** despite a better-looking gross Sharpe
-(0.23) than earlier iterations of this model, IC is still essentially
-zero/slightly negative (-0.017) and neither the gross nor net Sharpe
-clears statistical significance — at only 34 non-overlapping quarters,
-the gross Sharpe's 95% bootstrap CI is [-0.50, 0.82] with a p-value of
-0.51 against H0: Sharpe = 0, and net of a conservative 20bps round-trip
-cost it's weaker still (Sharpe 0.18, p=0.61). **The honest conclusion:
-this model shows no edge that's distinguishable from zero, gross or
-net** — a higher point estimate on a noisy, small-sample metric is not
-evidence of a real edge, which is exactly why the bootstrap check exists.
-This project demonstrates a leakage-aware, cost-aware,
-statistically-checked research pipeline — it does not demonstrate a
-validated source of alpha, and shouldn't be described as one.
+**Honest read of these numbers:** IC is essentially zero/slightly
+negative (-0.017) and neither the gross nor net Sharpe clears statistical
+significance — at 36 non-overlapping quarters, the gross Sharpe's 95%
+bootstrap CI is [-0.56, 0.76] with a p-value of 0.60 against H0: Sharpe =
+0, and net of a conservative 20bps round-trip cost it's weaker still
+(Sharpe 0.13, p=0.71). **The honest conclusion: this model shows no
+edge that's distinguishable from zero, gross or net.** This project
+demonstrates a leakage-aware, cost-aware, statistically-checked research
+pipeline — it does not demonstrate a validated source of alpha, and
+shouldn't be described as one.
+
+**A bug in decile assignment was found and fixed here, not just a data
+quirk.** An earlier version of `assign_deciles` (`backtest.py`) ran
+`pd.qcut` directly on `pred` with `duplicates="drop"`. When two stocks'
+predicted scores tied (plausible whenever multiple names are routed to
+the same GBM leaf), that dropped edge silently merged two bins and
+shifted every label above the merge point down by one — so the *actual*
+top-ranked stocks that quarter were no longer labeled `9`, and
+`compute_portfolio_returns`/`compute_turnover` (which hardcode literal
+`decile == 9` / `decile == 0`) saw zero rows for the long leg. This
+wasn't a thin trading day; checking it directly showed the long leg was
+completely empty (0 names) on 2 of the 36 quarters while the bottom
+bucket silently absorbed ~2 deciles' worth of names (~97 instead of
+~48). Both quarters were then silently dropped from the return series
+entirely, understating the sample by 2 quarters with no warning
+anywhere. Fixed by ranking `pred` (`rank(method="first")`) before
+`qcut`, which guarantees exactly 10 evenly-sized bins every quarter
+regardless of ties — see `assign_deciles`'s docstring. All numbers
+above are post-fix, from the full 36-quarter sample.
 
 ### Long-short vs. long-only
 
@@ -75,22 +87,22 @@ decile only, no short leg) from the exact same predictions
 
 | Metric                  | Long-short | Long-only |
 |--------------------------|:----------:|:---------:|
-| Annualized return (gross)| 5.0%       | **17.5%** |
-| Annualized volatility    | 21.6%      | 26.6%     |
-| Sharpe (gross)           | 0.23       | **0.66**  |
-| Sharpe 95% bootstrap CI (gross) | [-0.50, 0.82] | **[0.01, 1.39]** |
-| Sharpe p-value, gross (H0: Sharpe=0) | 0.51 | **0.066** |
-| Sharpe, net of costs     | 0.18       | **0.64**  |
-| Sharpe p-value, net (H0: Sharpe=0) | 0.61 | **0.075** |
-| Max drawdown (gross)     | -37.1%     | **-27.4%**|
+| Annualized return (gross)| 3.8%       | **16.7%** |
+| Annualized volatility    | 21.5%      | 26.1%     |
+| Sharpe (gross)           | 0.18       | **0.64**  |
+| Sharpe 95% bootstrap CI (gross) | [-0.56, 0.76] | **[0.02, 1.34]** |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.60 | **0.063** |
+| Sharpe, net of costs     | 0.13       | **0.62**  |
+| Sharpe p-value, net (H0: Sharpe=0) | 0.71 | **0.071** |
+| Max drawdown (gross)     | -37.6%     | **-27.4%**|
 
 **Honest read:** the short leg looks like a net drag here, not a hedge
-earning its keep. Dropping it more than triples annualized return and
+earning its keep. Dropping it more than quadruples annualized return and
 roughly triples Sharpe, and — despite higher volatility — produces a
 *shallower* max drawdown too. Long-only's gross Sharpe CI lower bound
-(0.01) just clears zero, putting it at the edge of conventional 5%
-significance (p=0.066 gross, p=0.075 net) — a materially different
-picture than the long-short book's p≈0.5–0.6, though still not a clean
+(0.02) just clears zero, putting it at the edge of conventional 5%
+significance (p=0.063 gross, p=0.071 net) — a materially different
+picture than the long-short book's p≈0.6–0.7, though still not a clean
 rejection of "no edge." **One important caveat:** this comparison was
 run *after* already seeing that the long-short result was weak, not as
 a pre-registered test — that's a multiple-comparisons/post-hoc-search
@@ -312,14 +324,14 @@ one.
   to avoid look-ahead leakage
 - ~~Statistical significance check on the Sharpe/IC~~ **Done** — see
   `backtest.bootstrap_sharpe_test` and Design decisions. Result: the
-  model's Sharpe is not statistically distinguishable from zero at n=34
+  model's Sharpe is not statistically distinguishable from zero at n=36
   quarters (see Results). This is now a checked, reported finding, not an
   open item.
 - ~~Back-of-envelope transaction cost estimate~~ **Done** — see
   `backtest.apply_transaction_costs` and Design decisions. Result: at a
-  20bps round-trip assumption, the model's gross Sharpe of 0.23 (already
-  not significant) drops to a net 0.18 (p=0.61, still not significant);
-  at 10bps, net Sharpe is 0.21 (p=0.55) — still not significant either
+  20bps round-trip assumption, the model's gross Sharpe of 0.18 (already
+  not significant) drops to a net 0.13 (p=0.71, still not significant);
+  at 10bps, net Sharpe is 0.15 (p=0.66) — still not significant either
   way (see Results).
 - ~~Fix the training objective/eval mismatch~~ **Done** — see Design
   decisions ("The model trains on a rank objective"). Result: switching
@@ -336,11 +348,20 @@ one.
 - ~~Compare long-short vs. long-only~~ **Done** — see
   `backtest.compare_portfolio_constructions` and Results ("Long-short
   vs. long-only"). Result: the short leg looks like a net drag on this
-  backtest — long-only's Sharpe (0.66 gross, 0.64 net) is meaningfully
-  higher than long-short's (0.23 gross, 0.18 net) and sits right at the
+  backtest — long-only's Sharpe (0.64 gross, 0.62 net) is meaningfully
+  higher than long-short's (0.18 gross, 0.13 net) and sits right at the
   edge of conventional significance (p≈0.07). Flagged as a post-hoc
   finding worth the proper follow-up test below, not yet a confirmed
   result.
+- ~~Fix `assign_deciles`'s tie-driven decile-label bug~~ **Done** — see
+  `backtest.assign_deciles` and Results. `pd.qcut(..., duplicates="drop")`
+  on tied `pred` values was silently shifting the top-decile label away
+  from `9` on 2 of 36 quarters, zeroing the long leg for those quarters
+  without any warning and dropping them from every reported number.
+  Fixed by ranking `pred` before `qcut`, guaranteeing exactly 10 bins
+  every quarter. All figures in this README are post-fix (36-quarter
+  sample); pre-fix (34-quarter) numbers are preserved in git history,
+  not duplicated here.
 - **Test whether long-only and long-short Sharpes actually differ from
   each other**, not just each from zero independently. The current
   bootstrap (`backtest.bootstrap_sharpe_test`) tests one return series

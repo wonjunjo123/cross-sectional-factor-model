@@ -14,10 +14,24 @@ import numpy as np
 
 
 def assign_deciles(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Ranks stocks into deciles by predicted score, WITHIN each date."""
+    """
+    Ranks stocks into deciles by predicted score, WITHIN each date.
+
+    Ties in `pred` (e.g. multiple stocks routed to the same GBM leaf) are
+    broken by `rank(method="first")` before qcut, so qcut's quantile edges
+    are computed on a column of guaranteed-unique per-date ranks and can
+    never collide. Without this, a single tie could make qcut's
+    `duplicates="drop"` silently produce FEWER than 10 bins for that date,
+    which shifts every label above the merge point down by one -- so the
+    top decile would no longer be labeled 9, and every caller that checks
+    `decile == 9` (the long leg) would silently see zero rows for that
+    date instead of the real top group. `duplicates="drop"` is kept only
+    as a defensive fallback for a cross-section genuinely smaller than 10
+    names, which shouldn't happen on this S&P 500 universe.
+    """
     predictions = predictions.copy()
     predictions["decile"] = predictions.groupby("date")["pred"].transform(
-        lambda x: pd.qcut(x, 10, labels=False, duplicates="drop")
+        lambda x: pd.qcut(x.rank(method="first"), 10, labels=False, duplicates="drop")
     )
     return predictions
 
@@ -118,7 +132,7 @@ def apply_transaction_costs(
 
 def bootstrap_sharpe_test(
     returns: pd.Series,
-    freq: int = 12,
+    freq: float = 12,
     n_bootstrap: int = 10000,
     seed: int = 0,
 ) -> dict:
@@ -169,7 +183,7 @@ def bootstrap_sharpe_test(
     }
 
 
-def performance_summary(port: pd.DataFrame, freq: int = 12, ret_col: str = "ls_ret") -> dict:
+def performance_summary(port: pd.DataFrame, freq: float = 12, ret_col: str = "ls_ret") -> dict:
     """
     Standard annualized performance metrics from a return series.
     freq=12 annualizes monthly returns; adjust if you change rebalance
@@ -204,7 +218,7 @@ _COMPARISON_COLS = [
 ]
 
 
-def _return_stats(port: pd.DataFrame, ret_col: str, freq: int) -> dict:
+def _return_stats(port: pd.DataFrame, ret_col: str, freq: float) -> dict:
     """Annualized performance + bootstrap significance for one return
     column. Shared by compare_models (gross/net long-short) and
     compare_portfolio_constructions (long-short vs. long-only)."""
@@ -213,7 +227,7 @@ def _return_stats(port: pd.DataFrame, ret_col: str, freq: int) -> dict:
     return perf
 
 
-def _gross_net_row(port: pd.DataFrame, gross_col: str, net_col: str, freq: int) -> dict:
+def _gross_net_row(port: pd.DataFrame, gross_col: str, net_col: str, freq: float) -> dict:
     """One comparison-table row: gross stats plus the net_col variants
     merged in under the `_net` suffix -- the shape both compare_models
     and compare_portfolio_constructions build their rows from."""
@@ -230,7 +244,7 @@ def _gross_net_row(port: pd.DataFrame, gross_col: str, net_col: str, freq: int) 
 
 
 def compare_models(
-    predictions_by_model: dict[str, pd.DataFrame], freq: int = 12, cost_bps: float = 20.0
+    predictions_by_model: dict[str, pd.DataFrame], freq: float = 12, cost_bps: float = 20.0
 ) -> pd.DataFrame:
     """
     Runs the full backtest for each model's predictions and returns a
@@ -267,7 +281,7 @@ def compare_models(
 
 
 def compare_portfolio_constructions(
-    predictions: pd.DataFrame, freq: int = 12, cost_bps: float = 20.0
+    predictions: pd.DataFrame, freq: float = 12, cost_bps: float = 20.0
 ) -> pd.DataFrame:
     """
     Compares the full long-short book (long top decile, short bottom
