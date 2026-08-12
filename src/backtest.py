@@ -220,8 +220,8 @@ _COMPARISON_COLS = [
 
 def _return_stats(port: pd.DataFrame, ret_col: str, freq: float) -> dict:
     """Annualized performance + bootstrap significance for one return
-    column. Shared by compare_models (gross/net long-short) and
-    compare_portfolio_constructions (long-short vs. long-only)."""
+    column. Used by compare_portfolio_constructions to build each row
+    (long-short vs. long-only)."""
     perf = performance_summary(port, freq=freq, ret_col=ret_col)
     perf.update(bootstrap_sharpe_test(port[ret_col], freq=freq))
     return perf
@@ -229,8 +229,7 @@ def _return_stats(port: pd.DataFrame, ret_col: str, freq: float) -> dict:
 
 def _gross_net_row(port: pd.DataFrame, gross_col: str, net_col: str, freq: float) -> dict:
     """One comparison-table row: gross stats plus the net_col variants
-    merged in under the `_net` suffix -- the shape both compare_models
-    and compare_portfolio_constructions build their rows from."""
+    merged in under the `_net` suffix."""
     perf = _return_stats(port, gross_col, freq)
 
     net = _return_stats(port, net_col, freq)
@@ -241,43 +240,6 @@ def _gross_net_row(port: pd.DataFrame, gross_col: str, net_col: str, freq: float
     perf["sharpe_net_ci_high"] = net["sharpe_ci_high"]
     perf["sharpe_net_p_value"] = net["sharpe_p_value"]
     return perf
-
-
-def compare_models(
-    predictions_by_model: dict[str, pd.DataFrame], freq: float = 12, cost_bps: float = 20.0
-) -> pd.DataFrame:
-    """
-    Runs the full backtest for each model's predictions and returns a
-    performance table -- this is the table your write-up's "findings"
-    section is built around: does the model have a real edge, net of
-    realistic trading costs, and is that edge even statistically
-    distinguishable from zero?
-
-    `freq` is the number of rebalance periods per year, used to annualize
-    return/vol -- 12 for monthly rebalancing, 4 for quarterly, etc. Must
-    match the `test_months`/`step_months` actually used to produce these
-    predictions in model.run_walk_forward, or the annualized numbers below
-    are simply wrong. `cost_bps` is passed straight to
-    apply_transaction_costs (see its docstring for what it represents).
-
-    Reports both gross and net-of-cost figures side by side, each with its
-    own bootstrap significance check -- costs and significance are
-    evaluated independently because a gross edge that's already
-    insignificant can only get worse net of costs, and collapsing them
-    into one number would hide which of the two is doing the damage.
-    """
-    rows = []
-    for name, preds in predictions_by_model.items():
-        port = compute_portfolio_returns(preds)
-        port = apply_transaction_costs(port, preds, cost_bps=cost_bps)
-
-        perf = _gross_net_row(port, "ls_ret", "ls_ret_net", freq)
-        perf["turnover_mean"] = compute_turnover(preds).mean()
-        perf["cost_bps"] = cost_bps
-        perf["model"] = name
-        rows.append(perf)
-
-    return pd.DataFrame(rows).set_index("model")[_COMPARISON_COLS]
 
 
 def compare_portfolio_constructions(
@@ -297,8 +259,8 @@ def compare_portfolio_constructions(
     charge -- no borrow fee/margin modeling -- are added for either row;
     see apply_transaction_costs and the README's known limitations.
 
-    Returns a table shaped like `compare_models`'s output, but indexed by
-    `construction` ("long_short" / "long_only") instead of `model`.
+    Returns a table indexed by `construction` ("long_short" / "long_only"),
+    one row per portfolio variant.
     """
     port = compute_portfolio_returns(predictions)
     port = apply_transaction_costs(port, predictions, cost_bps=cost_bps)

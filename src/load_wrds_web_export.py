@@ -35,15 +35,15 @@ _CIZ_COLS = {
     "MbrStartDt": "start",
     "MbrEndDt": "ending",
     "DlyCalDt": "date",
-    "DlyPrc": "prc",
-    "DlyRet": "ret",
+    "DlyPrc": "prc", # closing price
+    "DlyRet": "ret", # total daily returns adjusted for dividends, splits, and delistings
     "DlyVol": "vol",
-    "ShrOut": "shrout",
+    "ShrOut": "shrout", # shares outstanding
     "DlyCumFacPr": "cfacpr",
     "DlyCumFacShr": "cfacshr",
 }
 
-
+# not necessary since we only have one file, I didn't have to refactor
 def _load_combined(raw_dir: Path = RAW_DIR) -> pd.DataFrame:
     files = sorted(raw_dir.glob("*membership_prices*.csv"))
     if not files:
@@ -53,7 +53,7 @@ def _load_combined(raw_dir: Path = RAW_DIR) -> pd.DataFrame:
         )
 
     frames = []
-    for f in files:
+    for f in files: # for us, we only have one file 
         df = pd.read_csv(f, usecols=list(_CIZ_COLS.keys()), low_memory=False)
         df = df.rename(columns=_CIZ_COLS)
         frames.append(df)
@@ -64,17 +64,18 @@ def _load_combined(raw_dir: Path = RAW_DIR) -> pd.DataFrame:
 
 def build_membership(combined: pd.DataFrame) -> pd.DataFrame:
     membership = combined[["permno", "start", "ending"]].drop_duplicates().copy()
-    membership["permno"] = membership["permno"].astype(int)
-    membership["start"] = pd.to_datetime(membership["start"])
-    membership["ending"] = pd.to_datetime(membership["ending"])
-    return membership.sort_values(["permno", "start"]).reset_index(drop=True)
+    membership["permno"] = membership["permno"].astype(int) # convert to int
+    membership["start"] = pd.to_datetime(membership["start"]) # convert to datetime object
+    membership["ending"] = pd.to_datetime(membership["ending"]) # convert to datetime object
+    return membership.sort_values(["permno", "start"]).reset_index(drop=True) # discards old index (since we sorted) and makes it clean default row index
 
 
 def build_prices(combined: pd.DataFrame) -> pd.DataFrame:
     cols = ["permno", "date", "prc", "ret", "vol", "shrout", "cfacpr", "cfacshr"]
     panel = combined[cols].copy()
     panel["date"] = pd.to_datetime(panel["date"])
-
+    
+    # just doing typecasting
     for col in ["prc", "ret", "vol", "shrout", "cfacpr", "cfacshr"]:
         panel[col] = pd.to_numeric(panel[col], errors="coerce")
 
@@ -83,11 +84,13 @@ def build_prices(combined: pd.DataFrame) -> pd.DataFrame:
     # Same CRSP quirk as data_prep.download_prices_wrds -- prc can be
     # negative when it's a bid/ask midpoint estimate rather than an actual
     # trade price; always abs() before using it for price levels.
+    # encodes "this is a quote estimate, not a real trade" by making the number negative
+    # The magnitude is still the real price estimate
     panel["prc"] = panel["prc"].abs()
     panel["mkt_cap"] = panel["prc"] * panel["shrout"] * 1000  # shrout is in thousands
     panel["dollar_vol"] = panel["prc"] * panel["vol"]
 
-    return panel.reset_index(drop=True)
+    return panel.reset_index(drop=True) # again, we are just cleaning the row indexes since we operated on it
 
 
 def main():
@@ -98,9 +101,12 @@ def main():
 
     print("Loading combined WRDS web export...")
     combined = _load_combined()
+    # combined is a pd dataframe object, with renamed columns to what I want
 
     print("Building membership...")
     membership = build_membership(combined)
+    # we just extract the different PERMNOs and its corresponding enter and exit times out of S&P500
+    
     DATA_DIR.mkdir(exist_ok=True)
     membership.to_parquet(DATA_DIR / "sp500_membership.parquet", index=False)
     print(
@@ -110,6 +116,9 @@ def main():
 
     print("Building daily price panel...")
     prices = build_prices(combined)
+    # we compute market cap and dollar trading volume for that day
+    # we also adjust for CRSP quirk of negative prc (bid-ask estimate) to make price column usable
+    
     prices.to_parquet(DATA_DIR / "prices_wrds.parquet", index=False)
     print(
         f"  {len(prices)} rows, {prices['date'].min().date()} to "

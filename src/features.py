@@ -31,6 +31,7 @@ import numpy as np
 def resample_to_monthly(panel: pd.DataFrame) -> pd.DataFrame:
     """
     Collapses the daily CRSP panel to month-end observations per PERMNO.
+    Cumulative return index, month-end market cap, average dollar volume trade, daily std for that monthff
 
     Builds a cumulative return index per PERMNO from CRSP's `ret` (total
     return, dividend- and delisting-adjusted by CRSP itself) rather than
@@ -39,10 +40,13 @@ def resample_to_monthly(panel: pd.DataFrame) -> pd.DataFrame:
     earlier yfinance version had to approximate via adjusted close.
     """
     panel = panel.sort_values(["permno", "date"]).copy()
+    
+    #cum_ret_index is a column that says “up until this date, this stock has had this growth factor (1 + ret)
     panel["cum_ret_index"] = panel.groupby("permno")["ret"].apply(
-        lambda r: (1 + r.fillna(0)).cumprod()
+        lambda r: (1 + r.fillna(0)).cumprod() # r is a series of returns for that permno
     ).reset_index(level=0, drop=True)
-
+    
+    # create a new column just for month so that we can aggregate by it
     panel["month"] = panel["date"].dt.to_period("M")
 
     monthly = (
@@ -51,12 +55,15 @@ def resample_to_monthly(panel: pd.DataFrame) -> pd.DataFrame:
             cum_ret_index=("cum_ret_index", "last"),
             mkt_cap=("mkt_cap", "last"),
             avg_dollar_vol=("dollar_vol", "mean"),
-            daily_ret_std=("ret", "std"),  # trailing realized vol, within-month
+            daily_ret_std=("ret", "std"),  # realized vol for this month
         )
         .reset_index()
     )
+    
+    # just round date cleanly to month
     monthly["date"] = monthly["month"].dt.to_timestamp("M")
-
+    
+    # we were only using the month column to aggregate so now we drop it
     return monthly.drop(columns="month").sort_values(["date","permno"])
 
 
@@ -76,12 +83,16 @@ def add_momentum_features(monthly: pd.DataFrame) -> pd.DataFrame:
 
     monthly["mom_1m"] = g.pct_change(1)
     monthly["mom_3m"] = g.pct_change(3)
+    # this is the return for the past 11 months starting a year ago, so excludes this month.
     monthly["mom_12m_ex1"] = g.shift(1) / g.shift(12) - 1
+
     return monthly
 
 
 def add_volatility_feature(monthly: pd.DataFrame) -> pd.DataFrame:
-    """Trailing realized daily-return volatility, already aggregated in resample step."""
+    """Trailing realized daily-return volatility, already aggregated in resample step.
+        This is solely renaming"""
+        
     return monthly.rename(columns={"daily_ret_std": "realized_vol"})
 
 

@@ -15,11 +15,14 @@ from pathlib import Path
 from features import build_feature_panel
 from model import run_walk_forward, summarize_ic
 from backtest import (
-    compare_models, compare_portfolio_constructions,
+    compare_portfolio_constructions,
     compute_portfolio_returns, apply_transaction_costs,
 )
-from visualize import plot_model_comparison, plot_ic_timeseries, plot_equity_curve
+from visualize import (
+    plot_portfolio_construction_comparison, plot_ic_timeseries, plot_equity_curve,
+)
 
+# this is relative file path for data and output
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
@@ -34,7 +37,7 @@ def main():
     print("Loading CRSP price panel and point-in-time membership...")
     daily_panel = pd.read_parquet(DATA_DIR / "prices_wrds.parquet")
     membership = pd.read_parquet(DATA_DIR / "sp500_membership.parquet")
-    
+
     print("Building feature panel...")
     feature_panel = build_feature_panel(daily_panel, membership, horizon=HORIZON)
     print(f"Feature panel shape: {feature_panel.shape}")
@@ -46,12 +49,13 @@ def main():
 
     OUTPUT_DIR.mkdir(exist_ok=True)
     feature_panel.to_parquet(OUTPUT_DIR / "feature_panel.parquet", index=False)
+    
 
     print("Training XGBoost ranker on walk-forward...")
     
     # Returns a dataframe of out-of-sample predictions with columns: [date, permno, fwd_ret, pred]
     # this is what backtest.py consumes
-    preds = run_walk_forward(feature_panel, test_months=1, step_months=HORIZON, horizon=HORIZON)
+    preds = run_walk_forward(feature_panel, train_months=60, test_months=1, step_months=HORIZON, horizon=HORIZON)
 
     print("-- IC summary --")
     ic = summarize_ic(preds)
@@ -59,26 +63,25 @@ def main():
 
     preds.to_parquet(OUTPUT_DIR / "predictions_gbm.parquet", index=False)
 
-    print("\n--- Performance summary ---")
+    plot_ic_timeseries({"gbm": ic}, OUTPUT_DIR / "ic_timeseries.png")
+
+    print("\n--- Long-short vs. long-only ---")
     # 12 / HORIZON (true division, not //): freq is just an annualization
     # scalar (ann_return = ret.mean() * freq), so it doesn't need to be a
     # whole number -- and // would silently floor to the wrong factor for
     # any HORIZON that doesn't evenly divide 12 (e.g. HORIZON=5 -> 12//5=2
     # instead of the correct 2.4).
-    summary = compare_models({"gbm": preds}, freq=12 / HORIZON)
-    print(summary)
-    summary.to_csv(OUTPUT_DIR / "model_comparison.csv")
-    plot_model_comparison(OUTPUT_DIR / "model_comparison.csv", OUTPUT_DIR / "model_comparison.png")
-    plot_ic_timeseries({"gbm": ic}, OUTPUT_DIR / "ic_timeseries.png")
-
-    print("\n--- Long-short vs. long-only ---")
     construction_summary = compare_portfolio_constructions(preds, freq=12 / HORIZON)
     print(construction_summary)
     construction_summary.to_csv(OUTPUT_DIR / "portfolio_construction_comparison.csv")
+    plot_portfolio_construction_comparison(
+        OUTPUT_DIR / "portfolio_construction_comparison.csv",
+        OUTPUT_DIR / "portfolio_construction_comparison.png",
+    )
 
-    # compare_models/compare_portfolio_constructions only keep the
-    # annualized summary -- save the underlying per-quarter return series
-    # too, since that's what an equity curve actually needs to plot.
+    # compare_portfolio_constructions only keeps the annualized summary --
+    # save the underlying per-quarter return series too, since that's what
+    # an equity curve actually needs to plot.
     portfolio_returns = compute_portfolio_returns(preds)
     portfolio_returns = apply_transaction_costs(portfolio_returns, preds)
     portfolio_returns.to_csv(OUTPUT_DIR / "portfolio_returns.csv", index=False)
