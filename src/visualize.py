@@ -1,18 +1,19 @@
 """
 visualize.py
 
-Turns output/model_comparison.csv into a single at-a-glance figure. The
-comparison table's real story is gross-vs-net (the cost impact) and whether
-the Sharpe edge clears statistical significance -- so each panel is a
-dumbbell (gross -> net) per model rather than a plain bar chart, with the
-Sharpe panel additionally showing its bootstrap 95% CI and p-value.
+Turns output/portfolio_construction_comparison.csv into a single
+at-a-glance figure. The comparison table's real story is gross-vs-net
+(the cost impact) and whether the Sharpe edge clears statistical
+significance -- so each panel is a dumbbell (gross -> net) per row
+rather than a plain bar chart, with the Sharpe panel additionally
+showing its bootstrap 95% CI and p-value.
 
 Run standalone:
 
     python src/visualize.py
 
-or import plot_model_comparison() and call it right after
-compare_models(...).to_csv(...) in main.py.
+or import plot_portfolio_construction_comparison() and call it right
+after compare_portfolio_constructions(...).to_csv(...) in main.py.
 """
 
 import pandas as pd
@@ -49,24 +50,27 @@ def _style_axes(ax):
     ax.set_axisbelow(True)
 
 
-def _dumbbell(ax, df, gross_col, net_col, title, fmt="{:.2f}",
+def _dumbbell(ax, df, gross_col, net_col, title, colors, labels, fmt="{:.2f}",
               gross_ci=None, net_ci=None):
-    """One row per model: a thin line from gross (light) to net (full
-    color), i.e. the standard 'before -> after' dumbbell for a cost-impact
-    comparison. Optional CI whiskers for gross/net (used for Sharpe only,
-    since that's the only metric with a bootstrap CI in the table)."""
-    models = list(df.index)
+    """One row per index entry: a thin line from gross (light) to net
+    (full color), i.e. the standard 'before -> after' dumbbell for a
+    cost-impact comparison. `colors`/`labels` map each df.index value to
+    a hex color / display name, so this generalizes to any row identity
+    (models, portfolio constructions, ...). Optional CI whiskers for
+    gross/net (used for Sharpe only, since that's the only metric with a
+    bootstrap CI in the table)."""
+    rows = list(df.index)
 
-    for i, model in enumerate(models):
-        color = COLORS.get(model, INK_MUTED)
-        gross, net = df.loc[model, gross_col], df.loc[model, net_col]
+    for i, row in enumerate(rows):
+        color = colors.get(row, INK_MUTED)
+        gross, net = df.loc[row, gross_col], df.loc[row, net_col]
 
         if gross_ci:
-            lo, hi = df.loc[model, gross_ci[0]], df.loc[model, gross_ci[1]]
+            lo, hi = df.loc[row, gross_ci[0]], df.loc[row, gross_ci[1]]
             ax.plot([lo, hi], [i - 0.14, i - 0.14], color=color, alpha=0.3,
                      linewidth=1.5, solid_capstyle="round", zorder=0)
         if net_ci:
-            lo, hi = df.loc[model, net_ci[0]], df.loc[model, net_ci[1]]
+            lo, hi = df.loc[row, net_ci[0]], df.loc[row, net_ci[1]]
             ax.plot([lo, hi], [i + 0.14, i + 0.14], color=color, alpha=0.55,
                      linewidth=1.5, solid_capstyle="round", zorder=0)
 
@@ -84,62 +88,71 @@ def _dumbbell(ax, df, gross_col, net_col, title, fmt="{:.2f}",
                     fontweight="bold")
 
     ax.axvline(0, color=BASELINE, linewidth=1, zorder=0)
-    ax.set_yticks(range(len(models)))
-    ax.set_yticklabels([MODEL_LABELS.get(m, m) for m in models], color=INK)
-    ax.set_ylim(-0.7, len(models) - 0.3)
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels([labels.get(r, r) for r in rows], color=INK)
+    ax.set_ylim(-0.7, len(rows) - 0.3)
     ax.set_title(title, color=INK, fontsize=11, fontweight="bold", loc="left")
     _style_axes(ax)
 
 
-def _turnover_panel(ax, df):
-    models = list(df.index)
-    colors = [COLORS.get(m, INK_MUTED) for m in models]
+def _turnover_panel(ax, df, colors, labels):
+    rows = list(df.index)
+    row_colors = [colors.get(r, INK_MUTED) for r in rows]
     turnover = df["turnover_mean"]
 
-    ax.barh(range(len(models)), turnover, color=colors, height=0.5, zorder=2)
-    for i, m in enumerate(models):
-        ax.annotate(f"{turnover[m]:.2f}x", (turnover[m], i),
+    ax.barh(range(len(rows)), turnover, color=row_colors, height=0.5, zorder=2)
+    for i, r in enumerate(rows):
+        ax.annotate(f"{turnover[r]:.2f}x", (turnover[r], i),
                     textcoords="offset points", xytext=(6, 0), va="center",
                     fontsize=8.5, color=INK)
 
-    ax.set_yticks(range(len(models)))
-    ax.set_yticklabels([MODEL_LABELS.get(m, m) for m in models], color=INK)
-    ax.set_ylim(-0.7, len(models) - 0.3)
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels([labels.get(r, r) for r in rows], color=INK)
+    ax.set_ylim(-0.7, len(rows) - 0.3)
     ax.set_xlim(0, max(turnover) * 1.25)
-    ax.set_title("Avg. quarterly turnover (long + short legs)", color=INK,
+    ax.set_title("Avg. quarterly turnover", color=INK,
                  fontsize=11, fontweight="bold", loc="left")
     _style_axes(ax)
 
 
-def plot_model_comparison(csv_path=None, out_path=None):
-    csv_path = Path(csv_path) if csv_path else OUTPUT_DIR / "model_comparison.csv"
-    out_path = Path(out_path) if out_path else OUTPUT_DIR / "model_comparison.png"
+def plot_portfolio_construction_comparison(csv_path=None, out_path=None):
+    """
+    Reads backtest.compare_portfolio_constructions's output (long-short
+    vs. long-only) and renders gross-vs-net Sharpe/return/drawdown
+    dumbbells plus a turnover panel -- the summary-stat companion to
+    plot_equity_curve's time-series view of the same two constructions.
+    """
+    csv_path = Path(csv_path) if csv_path else OUTPUT_DIR / "portfolio_construction_comparison.csv"
+    out_path = Path(out_path) if out_path else OUTPUT_DIR / "portfolio_construction_comparison.png"
 
-    df = pd.read_csv(csv_path, index_col="model")
+    df = pd.read_csv(csv_path, index_col="construction")
 
     fig, axes = plt.subplots(2, 2, figsize=(11, 8), facecolor=SURFACE)
-    fig.suptitle("Backtest performance: gross vs. net of transaction costs",
+    fig.suptitle("Backtest performance: long-short vs. long-only, gross vs. net",
                  fontsize=13, fontweight="bold", color=INK, x=0.02, ha="left")
     fig.text(
         0.02, 0.945,
-        f"Long top-decile / short bottom-decile, {int(df['n_periods'].iloc[0])} "
-        f"non-overlapping quarters, {df['cost_bps'].iloc[0]:.0f}bps assumed "
-        "round-trip cost -- light marker = gross, dark marker = net",
+        f"{int(df['n_periods'].iloc[0])} non-overlapping quarters, "
+        f"{df['cost_bps'].iloc[0]:.0f}bps assumed round-trip cost -- "
+        "light marker = gross, dark marker = net",
         fontsize=9, color=INK_SECONDARY,
     )
 
     _dumbbell(axes[0, 0], df, "sharpe", "sharpe_net", "Sharpe ratio",
+              CONSTRUCTION_COLORS, CONSTRUCTION_LABELS,
               gross_ci=("sharpe_ci_low", "sharpe_ci_high"),
               net_ci=("sharpe_net_ci_low", "sharpe_net_ci_high"))
     _dumbbell(axes[0, 1], df, "ann_return", "ann_return_net",
-              "Annualized return", fmt="{:+.1%}")
+              "Annualized return", CONSTRUCTION_COLORS, CONSTRUCTION_LABELS,
+              fmt="{:+.1%}")
     _dumbbell(axes[1, 0], df, "max_drawdown", "max_drawdown_net",
-              "Max drawdown", fmt="{:.1%}")
-    _turnover_panel(axes[1, 1], df)
+              "Max drawdown", CONSTRUCTION_COLORS, CONSTRUCTION_LABELS,
+              fmt="{:.1%}")
+    _turnover_panel(axes[1, 1], df, CONSTRUCTION_COLORS, CONSTRUCTION_LABELS)
 
     p_lines = [
-        f"{MODEL_LABELS.get(m, m)}: net Sharpe p={df.loc[m, 'sharpe_net_p_value']:.2f}"
-        for m in df.index
+        f"{CONSTRUCTION_LABELS.get(c, c)}: net Sharpe p={df.loc[c, 'sharpe_net_p_value']:.2f}"
+        for c in df.index
     ]
     fig.text(0.02, 0.005,
               "Bootstrap p-value, H0: Sharpe = 0 (net) -- " + "   |   ".join(p_lines),
@@ -212,8 +225,9 @@ def plot_equity_curve(returns_csv=None, out_path=None):
     """
     Cumulative growth of $1 over time, long-short vs. long-only, gross vs.
     net of costs, with net-of-cost underwater drawdown directly below.
-    This is the one thing the summary figures (plot_model_comparison's
-    bars, plot_ic_timeseries) don't show: HOW the return accrued --
+    This is the one thing the summary figures
+    (plot_portfolio_construction_comparison's bars, plot_ic_timeseries)
+    don't show: HOW the return accrued --
     steadily, in one lucky quarter, wiped out and rebuilt -- not just the
     endpoint annualized stats. `returns_csv` is the per-period return
     series (date, long_ret, short_ret, ls_ret, ls_ret_net, long_ret_net,
@@ -279,7 +293,7 @@ def plot_equity_curve(returns_csv=None, out_path=None):
 
 
 if __name__ == "__main__":
-    plot_model_comparison()
+    plot_portfolio_construction_comparison()
 
     ic_path = OUTPUT_DIR / "ic_gbm.csv"
     if ic_path.exists():

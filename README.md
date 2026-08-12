@@ -30,30 +30,32 @@ overstates performance through survivorship or look-ahead bias.
 Produced by a full walk-forward run (60-month rolling train window, 2012–2026,
 467–492 point-in-time S&P 500 members per month), predicting **3-month
 forward relative return** (see Design decisions), evaluated on 36
-non-overlapping quarters via `output/model_comparison.csv`:
+non-overlapping quarters via `output/portfolio_construction_comparison.csv`
+(the `long_short` row — see Long-short vs. long-only below for the full
+table, including the `long_only` row):
 
 | Metric                          | XGBoost (`rank:ndcg`) |
 |----------------------------------|:------------------------:|
-| Annualized return (gross)        | 4.8%                     |
-| Annualized volatility             | 19.9%                    |
-| Sharpe (gross)                    | 0.24                     |
-| Sharpe 95% bootstrap CI (gross)   | [-0.50, 0.81]            |
-| Sharpe p-value, gross (H0: Sharpe=0) | 0.48                  |
-| **Annualized return, net of costs** | **3.8%**               |
-| **Sharpe, net of costs**          | **0.19**                 |
-| **Sharpe 95% bootstrap CI (net)** | **[-0.57, 0.76]**        |
-| **Sharpe p-value, net (H0: Sharpe=0)** | **0.58**            |
-| Max drawdown (gross / net)        | -30.3% / -32.7%          |
-| Avg. quarterly IC (Spearman)      | -0.008                   |
-| Avg. quarterly turnover (long+short) | 1.25                  |
+| Annualized return (gross)        | 4.4%                     |
+| Annualized volatility             | 22.2%                    |
+| Sharpe (gross)                    | 0.20                     |
+| Sharpe 95% bootstrap CI (gross)   | [-0.56, 0.76]            |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.56                  |
+| **Annualized return, net of costs** | **3.3%**               |
+| **Sharpe, net of costs**          | **0.15**                 |
+| **Sharpe 95% bootstrap CI (net)** | **[-0.63, 0.72]**        |
+| **Sharpe p-value, net (H0: Sharpe=0)** | **0.66**            |
+| Max drawdown (gross / net)        | -30.0% / -32.5%          |
+| Avg. quarterly IC (Spearman)      | -0.010                   |
+| Avg. quarterly turnover (long+short) | 1.28                  |
 | Assumed round-trip cost           | 20 bps per unit of combined long+short turnover |
 
-**Honest read of these numbers:** IC is essentially zero (-0.008) and
+**Honest read of these numbers:** IC is essentially zero (-0.010) and
 neither the gross nor net Sharpe clears statistical significance — at 36
-non-overlapping quarters, the gross Sharpe's 95% bootstrap CI is [-0.50,
-0.81] with a p-value of 0.48 against H0: Sharpe = 0, and net of a
-conservative 20bps round-trip cost it's weaker still (Sharpe 0.19,
-p=0.58). **The honest conclusion: this model shows no edge that's
+non-overlapping quarters, the gross Sharpe's 95% bootstrap CI is [-0.56,
+0.76] with a p-value of 0.56 against H0: Sharpe = 0, and net of a
+conservative 20bps round-trip cost it's weaker still (Sharpe 0.15,
+p=0.66). **The honest conclusion: this model shows no edge that's
 distinguishable from zero, gross or net.** This project demonstrates a
 leakage-aware, cost-aware, statistically-checked research pipeline — it
 does not demonstrate a validated source of alpha, and shouldn't be
@@ -89,30 +91,28 @@ decile only, no short leg) from the exact same predictions
 
 | Metric                  | Long-short | Long-only |
 |--------------------------|:----------:|:---------:|
-| Annualized return (gross)| 4.8%       | **17.1%** |
-| Annualized volatility    | 19.9%      | 25.2%     |
-| Sharpe (gross)           | 0.24       | **0.68**  |
-| Sharpe 95% bootstrap CI (gross) | [-0.50, 0.81] | **[0.06, 1.34]** |
-| Sharpe p-value, gross (H0: Sharpe=0) | 0.48 | **0.049** |
-| Sharpe, net of costs     | 0.19       | **0.66**  |
-| Sharpe p-value, net (H0: Sharpe=0) | 0.58 | **0.056** |
-| Max drawdown (gross)     | -30.3%     | **-22.2%**|
+| Annualized return (gross)| 4.4%       | **17.3%** |
+| Annualized volatility    | 22.2%      | 26.2%     |
+| Sharpe (gross)           | 0.20       | **0.66**  |
+| Sharpe 95% bootstrap CI (gross) | [-0.56, 0.76] | **[0.03, 1.32]** |
+| Sharpe p-value, gross (H0: Sharpe=0) | 0.56 | **0.055** |
+| Sharpe, net of costs     | 0.15       | **0.64**  |
+| Sharpe p-value, net (H0: Sharpe=0) | 0.66 | **0.063** |
+| Max drawdown (gross)     | -30.0%     | **-23.9%**|
 
 **Honest read:** the short leg still looks like a net drag, not a hedge
 earning its keep — long-only's Sharpe is roughly triple long-short's on
 both a gross and net basis, with a shallower max drawdown despite higher
-volatility. The gross p-value (0.049) now technically crosses the
-conventional 0.05 threshold, but I'm deliberately not calling this
-"significant": the net p-value (0.056) doesn't, and a result that flips
-sides of a threshold depending on whether costs are included, on n=36
-quarters, is exactly the kind of borderline result that threshold
-language oversells. **Two important caveats compound here, not one:**
-this comparison was run *after* already seeing the long-short result was
-weak (a post-hoc/multiple-comparisons risk), AND `colsample_bytree=0.7`
-(what moved these numbers from the earlier p≈0.06-0.07 read to
-p≈0.05-0.06) was itself chosen from a Tier 1 sweep that did not clear
-significance on its own (see Design decisions). Stacking a borderline
-hyperparameter choice on top of a post-hoc portfolio-construction
+volatility. Both p-values (0.055 gross, 0.063 net) sit just above the
+conventional 0.05 threshold — close enough that a small hyperparameter or
+sample change could tip it either way, which is itself evidence this
+shouldn't be read as "significant." **Two important caveats compound
+here, not one:** this comparison was run *after* already seeing the
+long-short result was weak (a post-hoc/multiple-comparisons risk), AND
+`colsample_bytree=0.7` (part of what moved these numbers versus earlier
+runs) was itself chosen from a Tier 1 sweep that did not clear
+significance on its own (see Design decisions). Stacking a hyperparameter
+choice that's itself not significant on top of a post-hoc portfolio-construction
 comparison is not how you accumulate confidence — "worth investigating
 further" is still the honest characterization, not "found alpha" (see
 Possible extensions for the proper next check: a paired test of whether
@@ -188,7 +188,8 @@ documented again in its docstring.
      `test_months=1, step_months=HORIZON` in `run_walk_forward`, so
      evaluation only takes one snapshot every 3 months and each quarter's
      return window is adjacent to, not overlapping, the next. `freq=4`
-     (not 12) is passed to `backtest.compare_models` to annualize correctly.
+     (not 12) is passed to `backtest.compare_portfolio_constructions` to
+     annualize correctly.
 - **Information Coefficient (Spearman rank correlation), not R²,** is
   the primary evaluation metric, since it evaluates rank order — what
   actually matters for a long-short portfolio built on ranks — rather
