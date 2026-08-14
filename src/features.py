@@ -117,10 +117,13 @@ def add_forward_return_target(monthly: pd.DataFrame, horizon: int = 1) -> pd.Dat
     """
     # this is the true fwd_ret value we compute
     # so that we can compute the true rankings to use as the target label
+    # basically, we will be ranking the true 3-month-out forward return for a  so that
+    # the rankings our model spits out will be inherently implying the 3-month-out forward return
     monthly = monthly.sort_values(["permno", "date"]).copy()
     monthly["fwd_ret"] = (
         monthly.groupby("permno")["cum_ret_index"].pct_change(horizon).shift(-horizon)
     )
+    
     return monthly
 
 
@@ -211,6 +214,6 @@ def build_feature_panel(
     monthly = cross_sectional_normalize(monthly, feature_cols)
 
     z_cols = [f"{c}_z" for c in feature_cols]
-    monthly = monthly.dropna(subset=z_cols + ["fwd_ret"])
+    monthly = monthly.dropna(subset = z_cols + ["fwd_ret"])
 
     return monthly
