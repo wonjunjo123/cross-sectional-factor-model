@@ -31,7 +31,16 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 # disjoint from the next -- required for backtest.py to validly compound
 # them as a sequential return series. See model.run_walk_forward's docstring.
 HORIZON = 3
+TRAIN_MONTHS = 60
 
+# The default model parameters are already declared within model.py,
+# but I just wanted to put it here so that I can remember I have the option to choose from main.py
+# I can pass MODEL_PARAMS in run_walk_forward method
+MODEL_PARAMS = dict(
+    objective="rank:pairwise", n_estimators=100, max_depth=4,
+    learning_rate=0.01, min_child_weight=5, colsample_bytree=0.7,
+    verbosity=0, random_state=0,
+)
 
 def main():
     print("Loading CRSP price panel and point-in-time membership...")
@@ -53,12 +62,15 @@ def main():
 
     print("Training XGBoost ranker on walk-forward...")
     
-    # Returns a dataframe of out-of-sample predictions with columns: [date, permno, fwd_ret, pred]
+    # preds returns a dataframe of out-of-sample predictions with columns: [date, permno, fwd_ret, pred]
+    # preds is all of the out-of-sample predictions aggregated from all the (October, January, April, July, for example, in HORIZON number of increments)
     # this is what backtest.py consumes
-    preds = run_walk_forward(feature_panel, train_months=60, test_months=1, step_months=HORIZON, horizon=HORIZON)
-
+    (preds, diagnostic) = run_walk_forward(feature_panel, train_months=TRAIN_MONTHS, test_months=1,
+                                          step_months=HORIZON, horizon=HORIZON, return_diagnostics=True, model_params=MODEL_PARAMS)
+    preds.to_csv('predictions.csv')
     print("-- IC summary --")
-    ic = summarize_ic(preds)
+    ic = summarize_ic(preds) # these are the out of sample ICs
+    
     ic.to_csv(OUTPUT_DIR / "ic_gbm.csv", index=False)
 
     preds.to_parquet(OUTPUT_DIR / "predictions_gbm.parquet", index=False)
