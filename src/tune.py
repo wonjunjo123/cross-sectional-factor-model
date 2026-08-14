@@ -10,18 +10,21 @@ aggregate number, since label dispersion shifts across regimes -- see
 the roadmap), and log the result to a CSV so sweeps are comparable side
 by side across separate runs instead of scattered across notebook cells.
 
-Sweeps are ONE parameter at a time (coordinate descent), matching the
-roadmap's own tiered structure -- not a combinatorial grid across every
-parameter in a tier. Lock in the best value for one parameter (via
-`base_params`), then sweep the next one against it.
+sweep() moves ONE parameter at a time (coordinate descent), matching the
+roadmap's own tiered structure. Lock in the best value for one parameter
+(via `base_params`), then sweep the next one against it. grid() instead
+runs the full combinatorial product of two parameters, for when
+coordinate descent's independence assumption doesn't hold -- see grid()'s
+docstring.
 
 Usage:
-    python src/tune.py                      # runs the Tier 1 sweeps
-    from tune import load_feature_panel, sweep, run_experiment
+    python src/tune.py                      # Tier 1 sweeps + a grid
+    from tune import load_feature_panel, sweep, grid, run_experiment
 """
 
 from __future__ import annotations
 
+import itertools
 import time
 from pathlib import Path
 
@@ -33,6 +36,10 @@ from model import run_walk_forward, DEFAULT_MODEL_PARAMS
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 RESULTS_PATH = OUTPUT_DIR / "tuning_results.csv"
+# Separate from RESULTS_PATH so grid()'s multi-param labels (e.g.
+# "max_depth=3,min_child_weight=15") don't get mixed into sweep()'s
+# single-param rows -- select_params.py assumes one param per label.
+GRID_RESULTS_PATH = OUTPUT_DIR / "grid_results.csv"
 
 # Must match main.py's HORIZON -- see model.run_walk_forward's docstring
 # on why test_months=1, step_months=HORIZON is required together.
@@ -126,16 +133,59 @@ def sweep(
     return results
 
 
-def _append_results(results: pd.DataFrame) -> None:
+def grid(
+    feature_panel: pd.DataFrame,
+    param_grid: dict[str, list],
+    base_params: dict | None = None,
+    save: bool = True,
+    **run_walk_forward_kwargs,
+) -> pd.DataFrame:
+    """
+    Runs the full Cartesian product of `param_grid` (e.g.
+    {"max_depth": [2, 3, 5], "min_child_weight": [5, 15, 30]}), holding
+    every other parameter at `base_params` (default: DEFAULT_MODEL_PARAMS).
+
+    Unlike sweep() -- which holds every parameter but one fixed, coordinate-
+    descent style -- this exists to check for INTERACTIONS between a pair
+    of hyperparameters that coordinate descent can't see (e.g. the best
+    max_depth may depend on min_child_weight). Keep grids small (two
+    parameters, a handful of values each): with only ~35 independent
+    walk-forward folds in this panel, searching a large combinatorial
+    space risks fitting hyperparameters to noise rather than signal (see
+    hyperparameter_approach.md). Appends to GRID_RESULTS_PATH, not
+    RESULTS_PATH, so these multi-param rows don't get mixed into
+    select_params.py's single-param sweep comparisons.
+    """
+    base_params = dict(base_params or {})
+    param_names = list(param_grid.keys())
+    rows = []
+    for combo in itertools.product(*param_grid.values()):
+        overrides = dict(zip(param_names, combo))
+        params = {**base_params, **overrides}
+        label = ",".join(f"{k}={v}" for k, v in overrides.items())
+        print(f"\n--- {label} ---")
+        row = run_experiment(feature_panel, params, label=label, **run_walk_forward_kwargs)
+        print(f"  oos_ic_mean={row['oos_ic_mean']:+.4f}  oos_ic_ir={row['oos_ic_ir']:+.3f}  "
+              f"in_sample_ic={row['in_sample_ic_mean']:+.4f}  gap={row['gap_mean']:+.4f}  "
+              f"({row['seconds']}s)")
+        rows.append(row)
+
+    results = pd.DataFrame(rows)
+    if save:
+        _append_results(results, path=GRID_RESULTS_PATH)
+    return results
+
+
+def _append_results(results: pd.DataFrame, path: Path = RESULTS_PATH) -> None:
     """CSV can't hold nested dict/list cells -- stringify model_params and
     per_fold_oos_ic so the row is still self-contained and readable."""
     OUTPUT_DIR.mkdir(exist_ok=True)
     results = results.copy()
     results["model_params"] = results["model_params"].apply(str)
     results["per_fold_oos_ic"] = results["per_fold_oos_ic"].apply(str)
-    header = not RESULTS_PATH.exists()
-    results.to_csv(RESULTS_PATH, mode="a", header=header, index=False)
-    print(f"\nAppended {len(results)} rows to {RESULTS_PATH}")
+    header = not path.exists()
+    results.to_csv(path, mode="a", header=header, index=False)
+    print(f"\nAppended {len(results)} rows to {path}")
 
 
 if __name__ == "__main__":
@@ -150,3 +200,13 @@ if __name__ == "__main__":
     sweep(panel, "min_child_weight", [5, 15, 30, 60])
     sweep(panel, "subsample", [0.6, 0.7, 0.8, 1.0])
     sweep(panel, "colsample_bytree", [0.6, 0.7, 0.8, 1.0])
+
+    # The Tier 1 sweeps above are coordinate descent -- each holds the
+    # other at DEFAULT_MODEL_PARAMS, so they can't see an interaction
+    # between two parameters. A prior run of this grid found exactly that:
+    # chaining the two sweeps' individual winners together landed on a
+    # combo that scored WORSE (oos_ic_ir=-0.12) than the grid's actual
+    # best cell, max_depth=4/min_child_weight=5 (oos_ic_ir=+0.08). Kept
+    # small (2 params, 20 combos) per hyperparameter_approach.md's caution
+    # against overfitting hyperparameters to ~35 non-iid folds.
+    grid(panel, {"max_depth": [2, 3, 4, 5, 6], "min_child_weight": [5, 15, 30, 60]})
