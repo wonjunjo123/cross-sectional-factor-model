@@ -17,6 +17,35 @@ from tqdm import tqdm
 
 from features import winsorize
 
+# Default XGBRanker hyperparameters. Exposed as a module-level constant
+# (not just inlined below) so tune.py's sweeps can start from
+# `{**DEFAULT_MODEL_PARAMS, "max_depth": 3}` etc. rather than needing to
+# restate every other value. objective="rank:ndcg" is XGBoost's closest
+# analog to LightGBM's lambdarank -- both are LambdaMART-style,
+# NDCG-optimizing rank objectives. min_child_weight is NOT the same thing
+# as LightGBM's min_child_samples (it thresholds summed Hessian, not a
+# raw sample count) -- kept at the same numeric value as a starting
+# point, not because the two are equivalent (see README known
+# limitations). random_state is fixed so tune.py's sweeps are actually
+# reproducible once subsample/colsample_bytree (Tier 1) introduce real
+# randomness -- at the default subsample=1.0 this is a no-op, but without
+# it, re-running an identical subsample<1 config would silently give a
+# different result each time, which would defeat the point of logging
+# sweeps for side-by-side comparison. colsample_bytree=0.7 is a Tier 1
+# tuning result (see hyperparameter_approach.md / tune.py) -- a paired
+# per-fold comparison against colsample_bytree=1.0 showed a consistent
+# lean (mean paired IC delta +0.009, same direction at 0.6/0.7/0.8) but
+# did NOT clear significance (t~1.4, ~58% of folds better). Set
+# provisionally as a low-risk, plausibly-neutral-to-mildly-positive
+# choice, not as a confirmed win -- max_depth, min_child_weight, and
+# subsample were all swept too and showed no distinguishable effect at
+# any value (every result within ~0.3 SE of every other). See
+# output/tuning_results.csv for the full sweep.
+DEFAULT_MODEL_PARAMS = dict(
+    objective="rank:pairwise", n_estimators=100, max_depth=5,
+    learning_rate=0.01, min_child_weight=30, colsample_bytree=0.7,
+    verbosity=0, random_state=0,
+)
 
 FEATURE_COLS = [
     "mom_1m_z", "mom_3m_z", "mom_12m_ex1_z", "realized_vol_z",
@@ -66,7 +95,7 @@ def walk_forward_splits(
         train_window = unique_months[train_start:train_end]
         test_window = unique_months[i:i + test_months]
         yield train_window, test_window # this is what makes it a generator object
-        i += step_months
+        i += step_months # this is where we use step_months
 
 
 def information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -78,41 +107,13 @@ def information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
     if len(y_true) < 2:
         return np.nan
-    ic, _ = spearmanr(y_pred, y_true)
+    ic, _ = spearmanr(y_pred, y_true) # returns the spearman rank correlation coefficient
     return ic
 
-# Default XGBRanker hyperparameters. Exposed as a module-level constant
-# (not just inlined below) so tune.py's sweeps can start from
-# `{**DEFAULT_MODEL_PARAMS, "max_depth": 3}` etc. rather than needing to
-# restate every other value. objective="rank:ndcg" is XGBoost's closest
-# analog to LightGBM's lambdarank -- both are LambdaMART-style,
-# NDCG-optimizing rank objectives. min_child_weight is NOT the same thing
-# as LightGBM's min_child_samples (it thresholds summed Hessian, not a
-# raw sample count) -- kept at the same numeric value as a starting
-# point, not because the two are equivalent (see README known
-# limitations). random_state is fixed so tune.py's sweeps are actually
-# reproducible once subsample/colsample_bytree (Tier 1) introduce real
-# randomness -- at the default subsample=1.0 this is a no-op, but without
-# it, re-running an identical subsample<1 config would silently give a
-# different result each time, which would defeat the point of logging
-# sweeps for side-by-side comparison. colsample_bytree=0.7 is a Tier 1
-# tuning result (see hyperparameter_approach.md / tune.py) -- a paired
-# per-fold comparison against colsample_bytree=1.0 showed a consistent
-# lean (mean paired IC delta +0.009, same direction at 0.6/0.7/0.8) but
-# did NOT clear significance (t~1.4, ~58% of folds better). Set
-# provisionally as a low-risk, plausibly-neutral-to-mildly-positive
-# choice, not as a confirmed win -- max_depth, min_child_weight, and
-# subsample were all swept too and showed no distinguishable effect at
-# any value (every result within ~0.3 SE of every other). See
-# output/tuning_results.csv for the full sweep.
-DEFAULT_MODEL_PARAMS = dict(
-    objective="rank:ndcg", n_estimators=100, max_depth=5,
-    learning_rate=0.01, min_child_weight=30, colsample_bytree=0.7,
-    verbosity=0, random_state=0,
-)
 
 
-# this is really the train() method but in a walk-forward fashion
+
+# this is running the walk_forward validation, all of them
 def run_walk_forward(
     panel: pd.DataFrame,
     train_months: int = 60,
@@ -154,6 +155,8 @@ def run_walk_forward(
     Returns a dataframe of out-of-sample predictions with columns:
     [date, permno, fwd_ret, pred] -- this is what backtest.py consumes.
     """
+    
+    # this is combining the dictionaries. The syntax is set up so that the second dict overrides the first if need be
     params = {**DEFAULT_MODEL_PARAMS, **(model_params or {})}
 
     # here, panel is the feature_panel
@@ -163,13 +166,14 @@ def run_walk_forward(
     embargo_months = max(0, horizon - 1)
 
     # each train_window ends up being a list of Timestamp objects of the 60 months trailing months to train on
-    # each test_window is a list of Timestamp object, 3 months after final training month (based on test_month=1, horizon=3)
+    # each test_window is a list with one Timestamp object, 3 months after final training month (based on test_month=1, horizon=3)
+    # train_window = [Timestamp('2012-01-31 00:00:00'), Timestamp('2012-02-29 00:00:00'), ... , Timestamp('2016-10-31 00:00:00')]
+    # test_window = [Timestamp('2017-01-31 00:00:00')]
 
-    # So however many sliding windows are available in
     for fold, (train_window, test_window) in enumerate(tqdm(walk_forward_splits(
         panel["date"], train_months=train_months, test_months=test_months,
         step_months=step_months, embargo_months=embargo_months))):
-
+        
         # these are pure rows from feature_panel with correct windows
         train = panel[panel["date"].isin(train_window)] # pulls rows from only train_window
         test = panel[panel["date"].isin(test_window)]
@@ -187,11 +191,13 @@ def run_walk_forward(
         # on winsorized returns, in-sample or out). Sorted by date so rows
         # sharing a date are contiguous -- GBM's per-date `group`
         # boundaries below require that.
-        train = train.copy().sort_values("date")
+        train = train.copy().sort_values("date") # this sorting is important for format keeping
 
         # we group by the date, only extract the fwd_ret (the label) and then
         # winsorize per cross section... the thresholds are different for each cross section
+        # wait but does winsorizing necessary here if we are only doing ranks?
         train["winsorized_target"] = train.groupby("date")[TARGET_COL].transform(winsorize)
+        #train["winsorized_target"] = train[TARGET_COL]
 
         # we are going to train on these cross-sectional vectors
         # they are stripped off PERMNO, purely the factors in each row
@@ -232,27 +238,28 @@ def run_walk_forward(
         # objective (rank:ndcg) via the LambdaMART algorithm.
         model = XGBRanker(**params)
         model.fit(X_train, rank_label, group=train_group)
-
-        preds = model.predict(X_test)
+        preds = model.predict(X_test) # outputs a list of ranking scores. The relative ordering of ranking scores matter, not the absolute magnitudes themselves
 
         out = test[["date", "permno", TARGET_COL]].copy()
         out["pred"] = preds
         results.append(out)
-
+        # eventually, results will be a list of dataframes each containing the ranking scores for each PERMNO on each date
+        
+        # we are calculating diagnostics for in sample
         if return_diagnostics:
             # In-sample IC: same model, scored on its OWN training rows,
             # against the true (unwinsorized) fwd_ret -- comparable
             # apples-to-apples with oos_ic below, computed the same way.
             in_sample = train[["date", TARGET_COL]].copy()
-            in_sample["pred"] = model.predict(X_train)
+            in_sample["pred"] = model.predict(X_train) # using training data since we are calculating in sample
             in_sample_ic = (
                 in_sample.groupby("date")
                 .apply(lambda g: information_coefficient(g[TARGET_COL], g["pred"]),
-                       include_groups=False)
+                       include_groups=False) # really just calculating the spearman rank correlation coefficient
                 .mean()
             )
             oos_ic = (
-                out.groupby("date")
+                out.groupby("date") # note this uses 'out' for oos
                 .apply(lambda g: information_coefficient(g[TARGET_COL], g["pred"]),
                        include_groups=False)
                 .mean()
@@ -270,24 +277,31 @@ def run_walk_forward(
                 "gap": in_sample_ic - oos_ic,
             })
 
-    # results is a list that contains M entries where M is the number of train/test windows
-    # and each entry is a month of predictions (HORIZON=3) months out past the training date
+    # predictions will be a data frame that contains all of the predictions from all of the walk-forward validation folds
+    # results is a list of dataframes and each dataframe contains the predictions of that walk-forward validation fold
     predictions = pd.concat(results, ignore_index=True)
 
     if return_diagnostics:
         return predictions, pd.DataFrame(diagnostics)
+    
     return predictions
 
 
 def summarize_ic(predictions: pd.DataFrame) -> pd.DataFrame:
     """Monthly IC time series plus mean and IC information ratio (mean/std)."""
+    
+    # preds is a dataframe of out-of-sample predictions
+    # from all of the aggregated iterations of walk-forward validations with columns: [date, permno, fwd_ret, pred]
+    # we are creating 
     monthly_ic = (
         predictions.groupby("date")
         .apply(lambda g: information_coefficient(g[TARGET_COL], g["pred"]), include_groups=False)
         .rename("ic")
         .reset_index()
     )
+    
     print(f"Mean IC: {monthly_ic['ic'].mean():.4f}")
+    print(f"Median IC: {monthly_ic['ic'].median():.4f}")
     print(f"IC std:  {monthly_ic['ic'].std():.4f}")
     print(f"IC IR:   {monthly_ic['ic'].mean() / monthly_ic['ic'].std():.4f}")
     return monthly_ic
