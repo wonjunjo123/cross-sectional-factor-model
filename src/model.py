@@ -12,7 +12,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from xgboost import XGBRanker
-from scipy.stats import spearmanr
+from scipy.stats import spearmanr, ttest_1samp
 from tqdm import tqdm
 
 from features import winsorize
@@ -42,14 +42,19 @@ from features import winsorize
 # any value (every result within ~0.3 SE of every other). See
 # output/tuning_results.csv for the full sweep.
 DEFAULT_MODEL_PARAMS = dict(
-    objective="rank:pairwise", n_estimators=100, max_depth=5,
-    learning_rate=0.01, min_child_weight=30, colsample_bytree=0.7,
+    objective="rank:pairwise", n_estimators=100, max_depth=4,
+    learning_rate=0.01, min_child_weight=5, colsample_bytree=0.7,
     verbosity=0, random_state=0,
 )
 
 FEATURE_COLS = [
-    "mom_1m_z", "mom_3m_z", "mom_12m_ex1_z", "realized_vol_z",
-    "log_mkt_cap_z", "log_dollar_vol_z",
+    # mom_1m_z and log_dollar_vol_z dropped per feature_expansion_instructions.md
+    # Section 3 -- 1-month reversal decays inside the 3-month holding window
+    # (wrong horizon for HORIZON=3), and log_dollar_vol has near-zero dispersion
+    # within S&P 500 large caps. Both are still computed in features.py, just
+    # not fed to the model.
+    "mom_3m_z", "mom_12m_ex1_z", "realized_vol_z", "log_mkt_cap_z",
+    "est_rev_3m_z", "rev_breadth_z", "sue_z", "short_ratio_z",
 ]
 TARGET_COL = "fwd_ret"
 
@@ -287,21 +292,40 @@ def run_walk_forward(
     return predictions
 
 
+# this is for out of sample
 def summarize_ic(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Monthly IC time series plus mean and IC information ratio (mean/std)."""
-    
+    """Monthly IC time series plus mean, IC information ratio (mean/std),
+    and a t-test of whether the mean IC is significantly different from
+    zero (H0: mean IC = 0) -- this is a per-month Spearman IC's own
+    p-value would only say whether a single month's cross-sectional
+    correlation is distinguishable from noise, not whether the model's
+    overall OOS skill is, which is the number that actually matters here.
+    Like oos_ic_std/oos_ic_ir (see tune.py), this assumes the monthly ICs
+    are independent -- only true at step_months=horizon (see
+    run_walk_forward's docstring); overlapping test windows would inflate
+    the t-stat the same way they deflate oos_ic_std."""
+
     # preds is a dataframe of out-of-sample predictions
     # from all of the aggregated iterations of walk-forward validations with columns: [date, permno, fwd_ret, pred]
-    # we are creating 
+    # we are creating
     monthly_ic = (
         predictions.groupby("date")
         .apply(lambda g: information_coefficient(g[TARGET_COL], g["pred"]), include_groups=False)
         .rename("ic")
         .reset_index()
     )
-    
+
+    ic_values = monthly_ic["ic"].dropna()
+    t_stat, p_value = ttest_1samp(ic_values, popmean=0)
+    # stashed on .attrs rather than changing the return shape, since
+    # callers (main.py, visualize.plot_ic_timeseries) already depend on
+    # summarize_ic returning a plain [date, ic] dataframe
+    monthly_ic.attrs["t_stat"] = t_stat
+    monthly_ic.attrs["p_value"] = p_value
+
     print(f"Mean IC: {monthly_ic['ic'].mean():.4f}")
     print(f"Median IC: {monthly_ic['ic'].median():.4f}")
     print(f"IC std:  {monthly_ic['ic'].std():.4f}")
     print(f"IC IR:   {monthly_ic['ic'].mean() / monthly_ic['ic'].std():.4f}")
+    print(f"t-stat:  {t_stat:.4f}  (p={p_value:.4f}, n={len(ic_values)}, H0: mean IC = 0)")
     return monthly_ic
