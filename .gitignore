@@ -226,3 +226,6 @@ output/predictions_linear.parquet
 data/raw/membership_prices.csv
 data/prices_wrds.parquet
 data/sp500_membership.parquet
+data/
+
+src/main.ipynb
