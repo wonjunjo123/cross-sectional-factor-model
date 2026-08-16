@@ -16,6 +16,7 @@ from scipy.stats import spearmanr, ttest_1samp
 from tqdm import tqdm
 
 from features import winsorize
+from backtest import assign_deciles
 
 # Default XGBRanker hyperparameters. Exposed as a module-level constant
 # (not just inlined below) so tune.py's sweeps can start from
@@ -292,29 +293,23 @@ def run_walk_forward(
     return predictions
 
 
-# this is for out of sample
-def summarize_ic(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Monthly IC time series plus mean, IC information ratio (mean/std),
-    and a t-test of whether the mean IC is significantly different from
-    zero (H0: mean IC = 0) -- this is a per-month Spearman IC's own
-    p-value would only say whether a single month's cross-sectional
+def _summarize_monthly_ic(monthly_ic: pd.DataFrame, label: str = "") -> pd.DataFrame:
+    """
+    Shared mean/median/std/IR/t-test summary for a [date, ic] monthly
+    series -- factored out so summarize_ic and summarize_tails_ic print
+    and stash results the same way instead of two copies drifting apart.
+    `label` prefixes each printed line (e.g. "[tails]") so the two
+    variants' output is easy to tell apart when read side by side.
+
+    The t-test (H0: mean IC = 0) is NOT a per-month Spearman p-value --
+    that would only say whether a single month's cross-sectional
     correlation is distinguishable from noise, not whether the model's
-    overall OOS skill is, which is the number that actually matters here.
-    Like oos_ic_std/oos_ic_ir (see tune.py), this assumes the monthly ICs
-    are independent -- only true at step_months=horizon (see
-    run_walk_forward's docstring); overlapping test windows would inflate
-    the t-stat the same way they deflate oos_ic_std."""
-
-    # preds is a dataframe of out-of-sample predictions
-    # from all of the aggregated iterations of walk-forward validations with columns: [date, permno, fwd_ret, pred]
-    # we are creating
-    monthly_ic = (
-        predictions.groupby("date")
-        .apply(lambda g: information_coefficient(g[TARGET_COL], g["pred"]), include_groups=False)
-        .rename("ic")
-        .reset_index()
-    )
-
+    overall OOS skill is, which is the number that actually matters
+    here. Like oos_ic_std/oos_ic_ir (see tune.py), this assumes the
+    monthly ICs are independent -- only true at step_months=horizon (see
+    run_walk_forward's docstring); overlapping test windows would
+    inflate the t-stat the same way they deflate oos_ic_std.
+    """
     ic_values = monthly_ic["ic"].dropna()
     t_stat, p_value = ttest_1samp(ic_values, popmean=0)
     # stashed on .attrs rather than changing the return shape, since
@@ -323,9 +318,58 @@ def summarize_ic(predictions: pd.DataFrame) -> pd.DataFrame:
     monthly_ic.attrs["t_stat"] = t_stat
     monthly_ic.attrs["p_value"] = p_value
 
-    print(f"Mean IC: {monthly_ic['ic'].mean():.4f}")
-    print(f"Median IC: {monthly_ic['ic'].median():.4f}")
-    print(f"IC std:  {monthly_ic['ic'].std():.4f}")
-    print(f"IC IR:   {monthly_ic['ic'].mean() / monthly_ic['ic'].std():.4f}")
-    print(f"t-stat:  {t_stat:.4f}  (p={p_value:.4f}, n={len(ic_values)}, H0: mean IC = 0)")
+    prefix = f"{label} " if label else ""
+    print(f"{prefix}Mean IC: {monthly_ic['ic'].mean():.4f}")
+    print(f"{prefix}Median IC: {monthly_ic['ic'].median():.4f}")
+    print(f"{prefix}IC std:  {monthly_ic['ic'].std():.4f}")
+    print(f"{prefix}IC IR:   {monthly_ic['ic'].mean() / monthly_ic['ic'].std():.4f}")
+    print(f"{prefix}t-stat:  {t_stat:.4f}  (p={p_value:.4f}, n={len(ic_values)}, H0: mean IC = 0)")
     return monthly_ic
+
+
+def _monthly_ic(predictions: pd.DataFrame) -> pd.DataFrame:
+    """[date, ic] Spearman IC per date -- the shared groupby both
+    summarize_ic and summarize_tails_ic run, over whichever subset of
+    `predictions` each one passes in."""
+    return (
+        predictions.groupby("date")
+        .apply(lambda g: information_coefficient(g[TARGET_COL], g["pred"]), include_groups=False)
+        .rename("ic")
+        .reset_index()
+    )
+
+
+# this is for out of sample
+def summarize_ic(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Monthly IC time series over the FULL cross-section each date --
+    rewards getting the entire monthly ordering right, including the
+    ~80% of names in the middle deciles that the long-short portfolio
+    never actually trades. See summarize_tails_ic for the
+    trades-only counterpart. See _summarize_monthly_ic for the
+    mean/IR/t-test details."""
+    return _summarize_monthly_ic(_monthly_ic(predictions))
+
+
+def summarize_tails_ic(predictions: pd.DataFrame) -> pd.DataFrame:
+    """
+    Same monthly-IC procedure as summarize_ic, but restricted to the
+    predicted top and bottom deciles each month (decile 9 and 0 from
+    backtest.assign_deciles -- the same tie-broken qcut the actual
+    long-short portfolio is built from, reused here rather than
+    re-implemented, so "tails" means exactly what gets traded).
+
+    Answers a different question than summarize_ic's full-sample IC:
+    not "is the whole monthly ordering right," but "within just the
+    stocks the strategy actually longs/shorts, does the model still
+    separate winners from losers." A model that's mediocre in the
+    middle deciles but sharp at the tails would look worse on the
+    full-sample IC than it deserves, and vice versa.
+
+    Noisier than the full-sample IC by construction -- roughly 20% of
+    the cross-section per month (top + bottom decile) vs. 100%, so
+    expect a wider IC std / weaker t-stat purely from the smaller
+    monthly N, not necessarily worse tail-ranking skill.
+    """
+    tails = assign_deciles(predictions)
+    tails = tails[tails["decile"].isin([0, 9])]
+    return _summarize_monthly_ic(_monthly_ic(tails), label="[tails]")
