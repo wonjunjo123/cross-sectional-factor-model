@@ -423,7 +423,15 @@ def cross_sectional_normalize(
     def zscore(x):
         x = winsorize(x)
         std = x.std()
-        return (x - x.mean()) / std if std and not np.isnan(std) else x * 0.0
+        # pd.isna (not `if std`/np.isnan) -- a degenerate group (all-NaN,
+        # or a single name) can produce pandas' nullable pd.NA rather
+        # than a plain float nan, and bool(pd.NA) raises rather than
+        # returning False, which crashed on real data (a single-name or
+        # all-missing (date, sector) cell) despite passing every
+        # synthetic test.
+        if pd.isna(std) or std == 0:
+            return x * 0.0
+        return (x - x.mean()) / std
 
     for col in feature_cols:
         full_z = monthly.groupby("date")[col].transform(zscore)
@@ -506,7 +514,12 @@ def build_feature_panel(
     low_coverage_cols = coverage[coverage < 0.80].index.tolist()
     for col in low_coverage_cols:
         monthly[f"{col}_missing"] = monthly[col].isna().astype(int)
-    monthly.attrs["coverage"] = coverage
+    # .to_dict() (plain Python floats), not the Series itself -- pandas
+    # tries to JSON-serialize .attrs on to_parquet, and a bare Series
+    # isn't JSON-serializable (caught by an actual to_parquet call on
+    # real data; every earlier test only inspected .attrs directly and
+    # never round-tripped through parquet).
+    monthly.attrs["coverage"] = coverage.astype(float).to_dict()
     monthly.attrs["low_coverage_cols"] = low_coverage_cols
 
     # Fundamentals have real coverage gaps (IBES gaps, new entrants
