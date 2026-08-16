@@ -11,11 +11,13 @@ Builds cached, PERMNO-keyed parquet files in data/ from CSVs exported
 manually via the WRDS website's web-based query tool, so features.py
 needs no WRDS-connectivity code at all -- it only ever reads parquet.
 
-WRDS TABLE NAMES ARE BEST-EFFORT, NOT VERIFIED -- same caveat
-api_data_prep.py's docstring already carries about CRSP table drift.
-Confirm each one against WRDS's own table/field picker at pull time; if
-a table name below is wrong, the fix is finding the current name in the
-WRDS web query browser, not changing the timing/linking logic below.
+WRDS TABLE NAMES: 5 of 7 verified directly against a live WRDS session
+(see data_prep_fundamentals.py, which ended up being the path actually
+used once the live API turned out to work after all -- confirmed via
+db.describe_table() on 2026-08-16). The 2 below that were wrong guesses
+are now corrected to their verified real names; kept this script and its
+manual-export path around as the documented fallback for a future
+session where the live API genuinely doesn't work.
 
 Expected raw exports in data/raw/ (7 total -- more than the 1 you've done
 before for CRSP; #6/#7 are the most skippable if this is a lot at once,
@@ -23,45 +25,49 @@ since sector neutralization is the lowest-priority feature and nothing
 else in the pipeline depends on it):
 
   1. IBES Estimates -> Summary Statistics -> Unadjusted Summary (US)
-     table (best guess): ibes.statsumu_epsus
+     table (verified): ibes.statsumu_epsus
      fields: TICKER, STATPERS, FPI, FPEDATS, MEASURE, NUMEST, NUMUP,
              NUMDOWN, MEANEST, STDEV
      filter: MEASURE='EPS', FPI in ('1','6')  (1=FY1, 6=next fiscal qtr)
      -> data/raw/*ibes_summary*.csv
 
-  2. IBES Estimates -> Actuals / Surprise History (unadjusted)
-     table (best guess): ibes.surpsumu_epsus (or whatever actuals file
-     the WRDS UI exposes under Unadjusted Actuals)
-     fields: TICKER, ANNDATS, FPEDATS, ACTUAL, PDICITY, MEASURE
+  2. IBES Estimates -> Actuals (unadjusted)
+     table (verified): ibes.actu_epsus (NOT ibes.surpsumu_epsus -- that
+     table doesn't exist; surpsumu is a different derived-surprise
+     product, not the raw actuals+anndats this pipeline needs)
+     fields: TICKER, ANNDATS, PENDS (-> fpedats), VALUE (-> actual),
+             PDICITY, MEASURE
      filter: MEASURE='EPS', PDICITY='QTR'
      -> data/raw/*ibes_actuals*.csv
 
   3. IBES-CRSP link (ICLINK)
-     table (best guess): wrdsapps_ibcrsphist.ibcrsphist
+     table (verified): wrdsapps_link_crsp_ibes.ibcrsphist (NOT
+     wrdsapps_ibcrsphist.ibcrsphist -- wrong library name)
      fields: TICKER, PERMNO, SDATE, EDATE, SCORE
      filter: SCORE <= 2  (best-quality links)
      -> data/raw/*ibes_crsp_link*.csv
 
   4. Compustat North America -> Supplemental -> Short Interest
-     table (best guess): comp.sec_shortint
+     table (verified): comp.sec_shortint
      fields: GVKEY, IID, DATADATE, SHORTINTADJ
      -> data/raw/*short_interest*.csv
 
   5. CRSP/Compustat Merged -> Linking Table
-     table (best guess): crsp.ccmxpf_lnkhist
+     table (verified): crsp.ccmxpf_lnkhist
      fields: GVKEY, LPERMNO, LINKDT, LINKENDDT, LINKTYPE, LINKPRIM
      filter: LINKTYPE in ('LU','LC'), LINKPRIM in ('P','C')  (standard
              CCM merge convention -- primary, research-quality links)
      -> data/raw/*ccm_link*.csv
 
   6. Compustat North America -> Company file
-     table (best guess): comp.company
+     table (verified): comp.company
      fields: GVKEY, GSECTOR
      -> data/raw/*compustat_company*.csv
 
   7. CRSP -> Stock/Security Files -> Stock Header / Names History
-     table (best guess): crsp.stksecurityinfohist
-     fields: PERMNO, SICCD, and its validity start/end date columns
+     table (verified): crsp.stksecurityinfohist
+     fields: PERMNO, SICCD, SECINFOSTARTDT (-> sic_start),
+             SECINFOENDDT (-> sic_end)
      -> data/raw/*siccd_history*.csv
 
 Cached outputs (all PERMNO-keyed -- ticker/GVKEY crosswalk resolution
@@ -93,8 +99,11 @@ _IBES_SUMMARY_COLS = {
     "NUMUP": "numup", "NUMDOWN": "numdown", "MEANEST": "meanest", "STDEV": "stdev",
 }
 _IBES_ACTUALS_COLS = {
-    "TICKER": "ticker", "ANNDATS": "anndats", "FPEDATS": "fpedats",
-    "ACTUAL": "actual", "PDICITY": "pdicity", "MEASURE": "measure",
+    # ibes.actu_epsus's own field names are PENDS/VALUE, not FPEDATS/
+    # ACTUAL -- renamed here so downstream code sees the same pipeline
+    # names regardless of which raw table version supplied them.
+    "TICKER": "ticker", "ANNDATS": "anndats", "PENDS": "fpedats",
+    "VALUE": "actual", "PDICITY": "pdicity", "MEASURE": "measure",
 }
 _IBES_LINK_COLS = {
     "TICKER": "ticker", "PERMNO": "permno", "SDATE": "sdate",
@@ -110,7 +119,7 @@ _CCM_LINK_COLS = {
 _COMPANY_COLS = {"GVKEY": "gvkey", "GSECTOR": "gsector"}
 _SICCD_COLS = {
     "PERMNO": "permno", "SICCD": "siccd",
-    "NAMEDT": "sic_start", "NAMEENDDT": "sic_end",  # WRDS field names vary by table version -- verify
+    "SECINFOSTARTDT": "sic_start", "SECINFOENDDT": "sic_end",
 }
 
 
