@@ -23,8 +23,8 @@ from pathlib import Path
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
-COLORS = {"gbm": "#2a78d6"}
-MODEL_LABELS = {"gbm": "XGBoost"}
+COLORS = {"gbm": "#2a78d6", "baseline": "#eb6834"}
+MODEL_LABELS = {"gbm": "XGBoost", "baseline": "Linear (Fama-MacBeth)"}
 
 # Same categorical slots (blue, orange) this project used back when there
 # were two models to distinguish -- reused here for the two portfolio
