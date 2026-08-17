@@ -31,7 +31,9 @@ from pathlib import Path
 import pandas as pd
 
 from features import build_feature_panel
-from model import run_walk_forward, DEFAULT_MODEL_PARAMS
+from model import run_walk_forward, DEFAULT_MODEL_PARAMS, _monthly_ic
+from backtest import assign_deciles
+from main import MODEL_PARAMS
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
@@ -51,7 +53,15 @@ def load_feature_panel() -> pd.DataFrame:
     of many experiments doesn't re-read/re-build it per config."""
     daily_panel = pd.read_parquet(DATA_DIR / "prices_wrds.parquet")
     membership = pd.read_parquet(DATA_DIR / "sp500_membership.parquet")
-    return build_feature_panel(daily_panel, membership, horizon=HORIZON)
+    ibes_estimates = pd.read_parquet(DATA_DIR / "ibes_estimates.parquet")
+    ibes_actuals = pd.read_parquet(DATA_DIR / "ibes_actuals.parquet")
+    short_interest = pd.read_parquet(DATA_DIR / "short_interest.parquet")
+    sector_crosswalk = pd.read_parquet(DATA_DIR / "sector_crosswalk.parquet")
+    siccd_history = pd.read_parquet(DATA_DIR / "siccd_history.parquet")
+    return build_feature_panel(
+        daily_panel, membership, ibes_estimates, ibes_actuals, short_interest,
+        sector_crosswalk, siccd_history, horizon=HORIZON,
+    )
 
 
 def run_experiment(
@@ -66,16 +76,25 @@ def run_experiment(
     """
     Runs one full walk-forward pass with `model_params` overriding
     DEFAULT_MODEL_PARAMS, and returns a single summary row: mean/std/IR
-    of OOS IC, mean in-sample IC, mean train-vs-OOS gap, and the
-    per-fold OOS IC series itself (so the distribution is inspectable
-    without re-running -- a hyperparameter that raises mean IC while
-    making some quarters wildly negative is not actually an improvement,
-    per the roadmap's own framing).
+    of OOS IC (both full-cross-section and tails-only), mean in-sample
+    IC, mean train-vs-OOS gap, and the per-fold IC series itself (so the
+    distribution is inspectable without re-running -- a hyperparameter
+    that raises mean IC while making some quarters wildly negative is
+    not actually an improvement, per the roadmap's own framing).
+
+    Tails-only OOS IC restricts each month's Spearman IC to the
+    predicted top/bottom decile (backtest.assign_deciles -- the same
+    tie-broken qcut the actual long-short portfolio is built from), not
+    the full cross-section -- see model.summarize_tails_ic's docstring
+    for why this can diverge from the full-sample OOS IC. Computed
+    directly via model._monthly_ic rather than summarize_tails_ic
+    itself, since that prints -- noisy across a sweep of many
+    experiments.
     """
     full_params = {**DEFAULT_MODEL_PARAMS, **model_params}
 
     start = time.time()
-    _, diagnostics = run_walk_forward(
+    preds, diagnostics = run_walk_forward(
         feature_panel, train_months=train_months, test_months=test_months,
         step_months=step_months, horizon=horizon,
         model_params=model_params, return_diagnostics=True,
@@ -83,16 +102,25 @@ def run_experiment(
     elapsed = time.time() - start
 
     oos_ic = diagnostics["oos_ic"]
+
+    tails_preds = assign_deciles(preds)
+    tails_preds = tails_preds[tails_preds["decile"].isin([0, 9])]
+    tails_ic = _monthly_ic(tails_preds)["ic"]
+
     return {
         "label": label,
         "model_params": full_params,
         "oos_ic_mean": oos_ic.mean(),
         "oos_ic_std": oos_ic.std(),
         "oos_ic_ir": oos_ic.mean() / oos_ic.std() if oos_ic.std() > 0 else float("nan"),
+        "tails_ic_mean": tails_ic.mean(),
+        "tails_ic_std": tails_ic.std(),
+        "tails_ic_ir": tails_ic.mean() / tails_ic.std() if tails_ic.std() > 0 else float("nan"),
         "in_sample_ic_mean": diagnostics["in_sample_ic"].mean(),
         "gap_mean": diagnostics["gap"].mean(),
         "n_folds": len(diagnostics),
         "per_fold_oos_ic": oos_ic.round(4).tolist(),
+        "per_fold_tails_ic": tails_ic.round(4).tolist(),
         "seconds": round(elapsed, 1),
     }
 
@@ -122,12 +150,27 @@ def sweep(
         label = f"{param_name}={value}"
         print(f"\n--- {label} ---")
         row = run_experiment(feature_panel, params, label=label, **run_walk_forward_kwargs)
-        print(f"  oos_ic_mean={row['oos_ic_mean']:+.4f}  oos_ic_ir={row['oos_ic_ir']:+.3f}  "
+        print(f"  oos_ic_mean={row['oos_ic_mean']:+.4f}  oos_ic_ir={row['oos_ic_ir']:+.3f}  \n"
+              f"tails_ic_mean={row['tails_ic_mean']:+.4f}  tails_ic_ir={row['tails_ic_ir']:+.3f}  \n"
               f"in_sample_ic={row['in_sample_ic_mean']:+.4f}  gap={row['gap_mean']:+.4f}  "
               f"({row['seconds']}s)")
         rows.append(row)
 
     results = pd.DataFrame(rows)
+    
+    a = results['tails_ic_mean'].idxmax()
+    b = results['tails_ic_ir'].idxmax()
+    c = results['oos_ic_mean'].idxmax()
+    d = results['oos_ic_ir'].idxmax()
+    
+    print('\n---------Results Summary---------')
+    print(f"\nBest tails_ic_mean: {round(results.at[a, 'tails_ic_mean'], 5)} -> {results.at[a,'label']}")
+    print(f"\nBest tails_ic_ir:   {round(results.at[b, 'tails_ic_ir'], 5)} -> {results.at[b,'label']}")
+    print(f"\nBest oos_ic_mean:   {round(results.at[c, 'oos_ic_mean'], 5)} -> {results.at[c,'label']}")
+    print(f"\nBest oos_ic_ir:     {round(results.at[d, 'oos_ic_ir'], 5)} -> {results.at[d,'label']}\n")
+    
+    print(results.loc[[a,b,c,d], ['label', 'tails_ic_mean', 'tails_ic_ir', 'oos_ic_mean', 'oos_ic_ir']])
+    
     if save:
         _append_results(results)
     return results
@@ -166,6 +209,7 @@ def grid(
         print(f"\n--- {label} ---")
         row = run_experiment(feature_panel, params, label=label, **run_walk_forward_kwargs)
         print(f"  oos_ic_mean={row['oos_ic_mean']:+.4f}  oos_ic_ir={row['oos_ic_ir']:+.3f}  "
+              f"tails_ic_mean={row['tails_ic_mean']:+.4f}  tails_ic_ir={row['tails_ic_ir']:+.3f}  "
               f"in_sample_ic={row['in_sample_ic_mean']:+.4f}  gap={row['gap_mean']:+.4f}  "
               f"({row['seconds']}s)")
         rows.append(row)
@@ -177,12 +221,14 @@ def grid(
 
 
 def _append_results(results: pd.DataFrame, path: Path = RESULTS_PATH) -> None:
-    """CSV can't hold nested dict/list cells -- stringify model_params and
-    per_fold_oos_ic so the row is still self-contained and readable."""
+    """CSV can't hold nested dict/list cells -- stringify model_params,
+    per_fold_oos_ic, and per_fold_tails_ic so the row is still
+    self-contained and readable."""
     OUTPUT_DIR.mkdir(exist_ok=True)
     results = results.copy()
     results["model_params"] = results["model_params"].apply(str)
     results["per_fold_oos_ic"] = results["per_fold_oos_ic"].apply(str)
+    results["per_fold_tails_ic"] = results["per_fold_tails_ic"].apply(str)
     header = not path.exists()
     results.to_csv(path, mode="a", header=header, index=False)
     print(f"\nAppended {len(results)} rows to {path}")
@@ -196,10 +242,13 @@ if __name__ == "__main__":
     # independent (held against DEFAULT_MODEL_PARAMS, not the previous
     # sweep's winner) -- inspect output/tuning_results.csv and pick
     # winners manually before chaining a base_params-locked sweep.
-    sweep(panel, "max_depth", [2, 3, 4, 5, 6])
-    sweep(panel, "min_child_weight", [5, 15, 30, 60])
-    sweep(panel, "subsample", [0.6, 0.7, 0.8, 1.0])
-    sweep(panel, "colsample_bytree", [0.6, 0.7, 0.8, 1.0])
+    sweep(panel, "n_estimators", list(range(10,16)), MODEL_PARAMS)
+    #sweep(panel, "n_estimators", list(range(14,100,3)), MODEL_PARAMS)
+    #sweep(panel, "learning_rate", [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001], MODEL_PARAMS)
+    #sweep(panel, "max_depth", [2, 3, 4, 5, 6], MODEL_PARAMS)
+    #sweep(panel, "min_child_weight", [5, 10, 15, 20, 30, 60], MODEL_PARAMS)
+    #sweep(panel, "subsample", [0.6, 0.7, 0.8, 1.0], MODEL_PARAMS)
+    #sweep(panel, "colsample_bytree", [0.6, 0.7, 0.8, 1.0], MODEL_PARAMS)
 
     # The Tier 1 sweeps above are coordinate descent -- each holds the
     # other at DEFAULT_MODEL_PARAMS, so they can't see an interaction
@@ -209,4 +258,5 @@ if __name__ == "__main__":
     # best cell, max_depth=4/min_child_weight=5 (oos_ic_ir=+0.08). Kept
     # small (2 params, 20 combos) per hyperparameter_approach.md's caution
     # against overfitting hyperparameters to ~35 non-iid folds.
-    grid(panel, {"max_depth": [2, 3, 4, 5, 6], "min_child_weight": [5, 15, 30, 60]})
+    
+    #grid(panel, {"max_depth": [2, 3, 4, 5, 6], "min_child_weight": [5, 10, 15, 20, 30, 60]}, MODEL_PARAMS)
