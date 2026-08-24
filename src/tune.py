@@ -242,13 +242,16 @@ if __name__ == "__main__":
     # independent (held against DEFAULT_MODEL_PARAMS, not the previous
     # sweep's winner) -- inspect output/tuning_results.csv and pick
     # winners manually before chaining a base_params-locked sweep.
-    sweep(panel, "n_estimators", list(range(10,16)), MODEL_PARAMS)
+    
+    
+    #sweep(panel, "n_estimators", [12,17], MODEL_PARAMS)
     #sweep(panel, "n_estimators", list(range(14,100,3)), MODEL_PARAMS)
     #sweep(panel, "learning_rate", [0.1, 0.05, 0.01, 0.005, 0.001, 0.0005, 0.0001], MODEL_PARAMS)
     #sweep(panel, "max_depth", [2, 3, 4, 5, 6], MODEL_PARAMS)
     #sweep(panel, "min_child_weight", [5, 10, 15, 20, 30, 60], MODEL_PARAMS)
-    #sweep(panel, "subsample", [0.6, 0.7, 0.8, 1.0], MODEL_PARAMS)
-    #sweep(panel, "colsample_bytree", [0.6, 0.7, 0.8, 1.0], MODEL_PARAMS)
+    #sweep(panel, "subsample", [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95], MODEL_PARAMS)
+    #sweep(panel, "colsample_bytree", [0.2,0.25,0.3,0.35,0.4,0.45,0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95], MODEL_PARAMS)
+    #sweep(panel, "random_state", list(range(0,20)), MODEL_PARAMS)
 
     # The Tier 1 sweeps above are coordinate descent -- each holds the
     # other at DEFAULT_MODEL_PARAMS, so they can't see an interaction
